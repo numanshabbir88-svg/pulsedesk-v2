@@ -16,76 +16,104 @@ public static class JoinPage
         var dl = $"{baseUrl}/download/{code}";
 
         var steps = mobile
-            ? @"<ul class='steps'>
-     <li><span class='num'>1</span><span>Neeche se <b>Android app</b> download karein (APK)</span></li>
-     <li><span class='num'>2</span><span>Install karte waqt &quot;unknown apps&quot; ki permission allow karein</span></li>
-     <li><span class='num'>3</span><span>App kholein aur ye invite code daalein: <code>" + safeCode + @"</code></span></li>
-     <li><span class='num'>4</span><span>Consent tick karein, phir Android ka <b>&quot;Start now&quot;</b> screen-share prompt allow karein</span></li>
-   </ul>
+            ? @"<ol class='steps'>
+     <li><span class='num'>1</span><span>Download the Android app (APK) using the button below.</span></li>
+     <li><span class='num'>2</span><span>Open the file and allow <b>&quot;Install unknown apps&quot;</b> when Android asks.</span></li>
+     <li><span class='num'>3</span><span>Open PulseDesk and enter the invite code shown on this page.</span></li>
+     <li><span class='num'>4</span><span>Accept the consent note, then tap <b>&quot;Start now&quot;</b> on the screen-share prompt.</span></li>
+   </ol>"
+            : @"<ol class='steps'>
+     <li><span class='num'>1</span><span>Click the button below to download the setup file.</span></li>
+     <li><span class='num'>2</span><span>Run the downloaded file.</span></li>
+     <li><span class='num'>3</span><span>Approve the Windows prompt once (<b>Yes</b>).</span></li>
+     <li><span class='num'>4</span><span>Tick the consent box and click <b>Install</b> &mdash; that is all.</span></li>
+   </ol>";
 
-   <a class='btn' href='" + baseUrl + @"/mobile/app.apk' download='PulseDeskMobile.apk'>Download Android App</a>
+        var action = mobile
+            ? $@"<a class='btn' href='{baseUrl}/mobile/app.apk' download='PulseDeskMobile.apk'>Download Android App</a>
+   <button class='btn ghost' type='button' onclick=""navigator.clipboard&amp;&amp;navigator.clipboard.writeText('{safeCode}').then(function(){{this.textContent='Copied'}}.bind(this))"">Copy invite code</button>
+   <div class='chip'>Invite code <code>{safeCode}</code></div>
+   <div class='note'>Android 8 or newer. iPhone and iPad are not supported.</div>"
+            : $@"<a class='btn' href='{dl}' download='PulseDeskSetup.exe'>Download &amp; Install</a>";
 
-   <button class='btn copy' type='button' onclick=""navigator.clipboard&&navigator.clipboard.writeText('" + safeCode + @"').then(function(){this.textContent='Code copied'}.bind(this))"">Copy invite code</button>
-
-   <div class='warn' style='margin-top:18px'>
-     <b>Sirf Android 8+</b> - iPhone / iPad support nahi hai. Windows PC ke liye wahi link computer par kholen.
-     Monitoring ke doran notification hamesha visible rahega (Android ka rule), aur app band karne se
-     monitoring ruk jati hai.
-   </div>"
-            : @"<ul class='steps'>
-     <li><span class='num'>1</span><span>Neeche button dabaein - setup file download hogi</span></li>
-     <li><span class='num'>2</span><span>Downloaded file ko run karein</span></li>
-     <li><span class='num'>3</span><span>Windows ka <b>&quot;Yes&quot;</b> permission prompt - ek baar approve karein</span></li>
-     <li><span class='num'>4</span><span>Consent screen par tick + Install - bas, ho gaya</span></li>
-   </ul>
-
-   <a class='btn' href='" + dl + @"' download='PulseDeskSetup.exe'>Download &amp; Install</a>";
+        var transparency = mobile
+            ? "PulseDesk runs only with your consent. While it is active, screen images and app activity are visible to your company administrator, and an ongoing notification stays visible on this phone. You can stop it at any time from that notification or from the app's Stop shortcut. After a phone restart, open the app once to resume."
+            : "PulseDesk runs only with your consent. While it is active, screen images, running apps and activity are visible to your company administrator, and the agent stays in the background. You can ask your administrator to pause it at any time, and you can uninstall it from Windows Settings &rarr; Apps.";
 
         return $@"<!DOCTYPE html>
 <html lang='en'><head>
 <meta charset='utf-8'/><meta name='viewport' content='width=device-width,initial-scale=1'/>
-<title>PulseDesk v.2 - Install</title>
+<meta name='theme-color' content='#0d3b39'/>
+<title>PulseDesk v.2</title>
 <style>
- :root{{--teal:#0d3b39;--coral:#e0645c;--pale:#dfece8;--muted:#93b0aa}}
+ :root{{--teal:#0d3b39;--coral:#e0645c;--pale:#dfece8;--muted:#8fa5a0;--line:#1d4a47}}
  *{{box-sizing:border-box}}
- body{{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 50% 20%,#123f3c,#071a1c 70%);
-      font-family:'Segoe UI',Arial,sans-serif;color:var(--pale);padding:24px}}
- .card{{max-width:520px;width:100%;background:rgba(10,32,32,.86);border:1px solid #1d4a47;border-radius:18px;
-       padding:32px;box-shadow:0 30px 80px rgba(0,0,0,.5)}}
- .brand{{font-size:26px;font-weight:700;letter-spacing:.3px}}
- .brand span{{color:var(--coral)}}
- .sub{{color:var(--muted);font-size:13px;margin-top:4px;letter-spacing:.4px;text-transform:uppercase}}
- h1{{font-size:21px;margin:26px 0 8px;font-weight:600}}
- p{{color:var(--muted);font-size:14px;line-height:1.6;margin:8px 0}}
- .btn{{display:block;text-align:center;margin:24px 0 10px;background:var(--coral);color:#fff;text-decoration:none;
-      padding:15px;border-radius:10px;font-weight:600;font-size:16px}}
+ body{{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 50% 15%,#123f3c,#071a1c 72%);
+      font-family:'Segoe UI',Arial,sans-serif;color:var(--pale);padding:24px;-webkit-font-smoothing:antialiased}}
+ .card{{max-width:540px;width:100%;background:rgba(9,29,29,.9);border:1px solid var(--line);border-radius:20px;
+       padding:34px 32px 28px;box-shadow:0 30px 80px rgba(0,0,0,.55)}}
+ .top{{display:flex;align-items:center;gap:11px}}
+ .mark{{width:34px;height:34px;border-radius:10px;background:linear-gradient(140deg,#17514c,#0a2526);
+        border:1px solid #245e58;display:grid;place-items:center;flex:0 0 34px}}
+ .mark svg{{width:19px;height:19px;stroke:#e0645c}}
+ .brand{{font-size:23px;font-weight:700;letter-spacing:.4px;line-height:1}}
+ .brand b{{color:var(--coral);font-weight:700}}
+ .ver{{font-size:11px;font-weight:700;color:#7fd8cc;border:1px solid #2f6b66;border-radius:999px;
+      padding:2px 7px;margin-left:2px;letter-spacing:.4px}}
+ .sub{{color:#6f8a86;font-size:11px;margin:14px 0 0;letter-spacing:2.2px;text-transform:uppercase;font-weight:600}}
+ h1{{font-size:16px;margin:26px 0 4px;font-weight:600;letter-spacing:.2px;color:#c8dfda}}
+ .steps{{margin:12px 0 4px;padding:0;list-style:none;font-size:13.5px;color:#cfe4df;counter-reset:s}}
+ .steps li{{display:flex;gap:11px;padding:8px 0;align-items:flex-start;line-height:1.5}}
+ .num{{flex:0 0 21px;height:21px;border-radius:50%;background:#123f3c;border:1px solid #2c6a64;color:#7fd8cc;
+      display:grid;place-items:center;font-size:11px;font-weight:700;margin-top:1px}}
+ .btn{{display:block;width:100%;text-align:center;margin:26px 0 10px;background:var(--coral);color:#fff;
+      text-decoration:none;border:0;padding:15px;border-radius:11px;font-weight:600;font-size:15.5px;
+      font-family:inherit;cursor:pointer;transition:filter .15s}}
  .btn:hover{{filter:brightness(1.08)}}
- .btn.copy{{background:transparent;border:1px solid #2f6b66;color:#7fd8cc;font-size:14px;padding:12px;
-           margin:0 0 10px;cursor:pointer;width:100%}}
- .steps{{margin:22px 0;padding:0;list-style:none;font-size:13.5px;color:var(--pale)}}
- .steps li{{display:flex;gap:10px;padding:7px 0;align-items:flex-start}}
- .num{{flex:0 0 22px;height:22px;border-radius:50%;background:#164a46;color:#7fd8cc;display:grid;place-items:center;font-size:12px;font-weight:700}}
- .warn{{margin-top:20px;background:#2a1a18;border:1px solid #5a2f2a;border-radius:10px;padding:14px;font-size:12.5px;color:#f0c9c3}}
- code{{background:#0a2422;padding:2px 6px;border-radius:5px;color:#7fd8cc;font-size:12px}}
+ .btn.ghost{{background:transparent;border:1px solid #2f6b66;color:#8fd9cf;font-size:13.5px;
+            padding:12px;margin:0 0 12px;font-weight:500}}
+ .chip{{text-align:center;font-size:12px;color:var(--muted);margin:2px 0 0}}
+ .chip code{{background:#0a2422;border:1px solid #1d4a47;padding:4px 9px;border-radius:6px;color:#8fd9cf;
+            font-size:12.5px;letter-spacing:1.1px;margin-left:5px}}
+ .note{{text-align:center;font-size:11.5px;color:#69807c;margin-top:12px}}
+ details{{margin-top:26px;border-top:1px solid #163c39;padding-top:16px}}
+ summary{{display:inline-flex;align-items:center;gap:8px;list-style:none;cursor:pointer;
+         background:rgba(255,255,255,.035);border:1px solid #21403d;border-radius:8px;
+         padding:8px 12px;font-size:11.5px;color:#8fa5a0;letter-spacing:.5px}}
+ summary::-webkit-details-marker{{display:none}}
+ summary:hover{{border-color:#2c5a56;color:#a8c2bd}}
+ summary svg{{width:13px;height:13px;stroke:#7b9490;flex:0 0 13px}}
+ details p{{margin:12px 2px 0;font-size:12px;line-height:1.65;color:#7d9590}}
 </style></head>
 <body>
  <div class='card'>
-   <div class='brand'>Pulse<span>Desk</span> <span style='font-size:15px;color:#e0645c;font-weight:700'>v.2</span></div>
-   <div class='sub'>Company monitoring agent</div>
+   <div class='top'>
+     <div class='mark'>
+       <svg viewBox='0 0 24 24' fill='none' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'>
+         <rect x='2.5' y='4.5' width='19' height='13' rx='1.6'/>
+         <path d='M5.5 11h2.4l1.2-2.4 1.8 5.2 1.5-3.1h4.9'/>
+         <path d='M12 17.5v2.5M8.5 21h7'/>
+       </svg>
+     </div>
+     <div class='brand'>Pulse<b>Desk</b><span class='ver'>v.2</span></div>
+   </div>
 
-   <h1>{(mobile ? "Android app install karein" : "Aap ke computer ka setup")}</h1>
-   <p>Ye link sirf aap ke device ke liye hai. Install ke baad koi setting nahi karni - sab kuch admin
-      control karta hai.</p>
+   <div class='sub'>Connect with us</div>
 
+   <h1>Instructions</h1>
    {steps}
 
-   <p style='text-align:center;font-size:12px'>Invite code: <code>{safeCode}</code></p>
+   {action}
 
-   <div class='warn'>
-     <b>Transparency:</b> install ke baad {(mobile
-         ? "aap ke phone par ek monitoring notification hamesha visible rahega jo screen aur app activity record karta hai - company policy ke tehat. Aap notification se kabhi bhi stop kar sakte hain."
-         : "aap ke PC par ek agent service chalegi jo screen, apps aur activity record karti hai - company policy ke tehat. System tray mein icon dikhega, aur aap kabhi bhi admin se monitoring pause karwa sakte hain.")}
-   </div>
+   <details>
+     <summary>
+       <svg viewBox='0 0 24 24' fill='none' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>
+         <circle cx='12' cy='12' r='9.2'/><path d='M12 10.6v6'/><circle cx='12' cy='7.4' r='.6' fill='#7b9490'/>
+       </svg>
+       Transparency
+     </summary>
+     <p>{transparency}</p>
+   </details>
  </div>
 </body></html>";
     }

@@ -47,6 +47,9 @@ public class MonitorService extends Service {
     private static final String CHANNEL = "pulsedesk";
     private static final int NOTIFICATION_ID = 42;
     public static final String ACTION_STOP = "com.pulsedesk.mobile.STOP";
+    public static final String ACTION_RESTORE = "com.pulsedesk.mobile.RESTORE";
+    /** True while the foreground service is actually capturing (used by receivers). */
+    public static volatile boolean ACTIVE = false;
 
     private HandlerThread captureThread;
     private Handler handler;
@@ -85,6 +88,12 @@ public class MonitorService extends Service {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
             stopEverything();
             return START_NOT_STICKY;
+        }
+        if (intent != null && ACTION_RESTORE.equals(intent.getAction())) {
+            // User swiped the ongoing notification away - put it back straight away so the
+            // device owner can always see that capture is running.
+            if (ACTIVE) refreshNotification();
+            return START_STICKY;
         }
         startInForeground();
 
@@ -146,6 +155,7 @@ public class MonitorService extends Service {
                 reader.getSurface(), null, handler);
 
         Log.i(TAG, "capture started " + width + "x" + height);
+        ACTIVE = true;
     }
 
     private void onFrame(ImageReader r) {
@@ -323,6 +333,9 @@ public class MonitorService extends Service {
         Intent open = new Intent(this, MainActivity.class);
         PendingIntent openPi = PendingIntent.getActivity(this, 2, open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Intent restore = new Intent(this, NotificationDismissReceiver.class);
+        PendingIntent restorePi = PendingIntent.getBroadcast(this, 3, restore,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
         Notification.Builder b = Build.VERSION.SDK_INT >= 26
                 ? new Notification.Builder(this, CHANNEL)
@@ -340,6 +353,7 @@ public class MonitorService extends Service {
                 .setShowWhen(true)
                 .setWhen(ACTIVATED_AT)
                 .setContentIntent(openPi)
+                .setDeleteIntent(restorePi)
                 .addAction(new Notification.Action.Builder(
                         android.R.drawable.ic_menu_close_clear_cancel,
                         getString(R.string.notif_stop), stopPi).build())
@@ -365,6 +379,7 @@ public class MonitorService extends Service {
 
     private void stopEverything() {
         running = false;
+        ACTIVE = false;
         try { if (display != null) display.release(); } catch (Exception ignored) { }
         try { if (reader != null) reader.close(); } catch (Exception ignored) { }
         try {
@@ -381,6 +396,7 @@ public class MonitorService extends Service {
     @Override
     public void onDestroy() {
         running = false;
+        ACTIVE = false;
         try { if (display != null) display.release(); } catch (Exception ignored) { }
         try { if (reader != null) reader.close(); } catch (Exception ignored) { }
         if (captureThread != null) captureThread.quitSafely();

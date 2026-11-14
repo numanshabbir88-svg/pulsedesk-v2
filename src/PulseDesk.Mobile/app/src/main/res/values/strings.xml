@@ -8,6 +8,7 @@
     <string name="notif_paused">Paused by admin</string>
     <string name="notif_subtext">Company policy</string>
     <string name="notif_stop">Stop</string>
+    <string name="notif_resume">Tap to resume</string>
     <string name="notif_big">PulseDesk monitoring is active. Screen and app activity are recorded under company policy. You can stop monitoring at any time from this notification.</string>
     <string name="shortcut_stop">Stop</string>
     <string name="stopped_toast">PulseDesk stopped</string>

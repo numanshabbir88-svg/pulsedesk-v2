@@ -55,6 +55,8 @@ Repo mein sirf source + scripts hain — `bin/`, `obj/`, `dist/` (binaries, SQLi
 
 > Android par monitoring hamesha visible hoti hai (permanent notification), aur user notification se stop kar sakta hai — ye jaan boojh kar consent-based design hai.
 
+> **Har network / reboot par dobara invite nahi:** agent ka enrollment token device par save hota hai, is liye internet badalne, Wi-Fi reconnect ya device restart par wahi device khud wapas connect ho jata hai. Sirf Android phone par reboot ke baad ek tap (screen-share allow) zaroori hai — Android ka rule hai.
+
 ---
 
 ## Folder layout
@@ -210,6 +212,12 @@ Android par:
 - **Permanent notification** dikhta hai — title **PulseDesk v.2**, text **Activated** (admin pause kare to
   **Paused by admin**). Notification par hi **Stop** button hai.
 - Launcher icon ko **long-press** karne par bhi **Stop** shortcut milta hai.
+- Notification **swipe** karne par capture rukta nahi — agent foran wapas dikha deta hai (ye consent
+  design ka hissa hai). Band karna ho to **Stop** dabaein.
+- Phone **restart** hone par Android screen-share permission reset ho jati hai: reboot ke baad ek
+  **"Tap to resume"** notification aati hai, us par tap kar ke dobara allow kar dein. **Naya invite
+  code nahi chahiye** — enrollment save rehta hai.
+- Wi-Fi / mobile data badalne par, ya internet temporarily jane par agent khud reconnect karta hai.
 - Screen shots / live view / app activity / pause / resume sab admin console se control hote hain.
 - Live view ~1.4 fps (mobile data bachane ke liye), screenshots server ke interval par.
 
