@@ -25,6 +25,9 @@ public sealed class Live
         if (set.IsEmpty) _viewers.TryRemove(id, out _);
     }
 
+    public bool HasViewers(string id) =>
+        _viewers.TryGetValue(id, out var set) && !set.IsEmpty;
+
     public async Task FanoutFrame(string id, byte[] buf, int count)
     {
         if (!_viewers.TryGetValue(id, out var set) || set.IsEmpty) return;

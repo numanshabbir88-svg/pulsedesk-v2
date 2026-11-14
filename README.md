@@ -30,6 +30,7 @@ Employee PC (agent)  --outbound HTTPS/WSS-->  Admin laptop (server)  <--browser-
 | Admin laptop par | admin rights (watchdog task SYSTEM ke under chalta hai) |
 | Public URL | Tailscale Funnel (recommended) ya Cloudflare quick tunnel |
 | Employee PC par | admin rights (install ke waqt UAC), koi .NET install ki zaroorat nahi (self-contained) |
+| Android phone (beta) | Android 8+ (APK), iPhone/iPad support nahi |
 
 Repo mein sirf source + scripts hain — `bin/`, `obj/`, `dist/` (binaries, SQLite DB, screenshots, admin password) `.gitignore` se bahar rakhe gaye hain.
 
@@ -50,6 +51,9 @@ Repo mein sirf source + scripts hain — `bin/`, `obj/`, `dist/` (binaries, SQLi
 | Consent screen before install | ✅ |
 | Visible app/uninstall entry + auto-start (user session) | ✅ |
 | Raw keystroke logging | ❌ (privacy by design) |
+| Android agent (beta): screen shots, live view, app activity, pause/resume | ✅ |
+
+> Android par monitoring hamesha visible hoti hai (permanent notification), aur user notification se stop kar sakta hai — ye jaan boojh kar consent-based design hai.
 
 ---
 
@@ -60,8 +64,10 @@ PulseDesk/
   src/
     PulseDesk.Server/     ASP.NET Core (minimal API) + dashboard (wwwroot/index.html)
     PulseDesk.Agent/      Windows agent (user session: screen + activity collector)
+    PulseDesk.Mobile/     Android agent (Java, MediaProjection + foreground service)
   scripts/
     publish.ps1           build + publish into dist\ (live admin config preserve karta hai)
+    build-mobile.ps1      Android APK build -> dist\server\agent\PulseDeskMobile.apk
     start-all.ps1         server + tunnel start (tunnel URL auto-detect)
     set-password.ps1      admin password set + server restart
     deploy-server-elevated.ps1  staged server update ko elevated deploy karta hai
@@ -188,6 +194,31 @@ Employee ko **koi setting, koi login, koi agent config** nahi karni.
 
 Code signing certificate paid hota hai, is liye Windows SmartScreen "Unknown publisher"
 dikha sakta hai: **More info -> Run anyway**. Ye normal hai self-signed/free builds ke liye.
+
+---
+
+## Android agent (beta)
+
+Sirf **Android 8+**. iPhone/iPad support nahi hai (Apple third-party screen monitoring allow nahi karta).
+
+1. Invite link **phone ke browser** mein kholen -> page khud Android app ka button dikhata hai.
+2. **Download Android App** -> APK install karein (browser "unknown apps" permission maangega).
+3. App kholein -> **invite code** daalein (join page par likha hota hai) -> consent tick.
+4. Android ka **"Start now"** screen-share prompt allow karein -> monitoring start.
+
+Android par:
+- **Permanent notification** dikhta hai (Android ka rule) — usi se **Stop** bhi ho sakta hai.
+- Screen shots / live view / app activity / pause / resume sab admin console se control hote hain.
+- Live view ~1.4 fps (mobile data bachane ke liye), screenshots server ke interval par.
+
+Build (developer):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-mobile.ps1
+# APK -> dist\server\agent\PulseDeskMobile.apk  (public: <PublicBaseUrl>/mobile/app.apk)
+```
+
+Zaroorat: JDK 17 (`%LOCALAPPDATA%\jdk17`) + Android SDK (`%LOCALAPPDATA%\Android\Sdk`, platform 34, build-tools 34).
 
 ---
 

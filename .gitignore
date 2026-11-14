@@ -16,6 +16,16 @@ data/
 *.log
 logs/
 
+# ---- android build output ----
+src/PulseDesk.Mobile/.gradle/
+src/PulseDesk.Mobile/build/
+src/PulseDesk.Mobile/app/build/
+src/PulseDesk.Mobile/local.properties
+*.apk
+*.aab
+# ...except the ready-to-install Android build users download directly from GitHub
+!releases/*.apk
+
 # ---- local secrets ----
 ADMIN_PASSWORD.txt
 appsettings.Production.json

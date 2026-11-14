@@ -325,6 +325,74 @@ app.MapPost("/api/shot", async (HttpRequest req) =>
     return Results.Json(new { ok = true });
 });
 
+// HTTP-only agents (Android app) cannot keep a WebSocket open on every network:
+// they poll for commands and deliver live frames with plain POSTs instead.
+app.MapGet("/api/agent/poll", (HttpRequest req) =>
+{
+    using var conn = db.Open();
+    var t = req.Headers["X-Device-Token"].ToString();
+    var did = db.DeviceId(conn, t);
+    if (did == null) return Results.Json(new { ok = false }, statusCode: 401);
+
+    int paused = 0, interval = 300;
+    var q = conn.CreateCommand();
+    q.CommandText = "SELECT paused, screenshot_interval_sec FROM devices WHERE id=$d";
+    q.Parameters.AddWithValue("$d", did);
+    using (var rd = q.ExecuteReader())
+        if (rd.Read()) { paused = rd.GetInt32(0); interval = rd.GetInt32(1); }
+
+    var c = conn.CreateCommand();
+    c.CommandText = "SELECT COUNT(*) FROM commands WHERE device_id=$d AND command='shot-now'";
+    c.Parameters.AddWithValue("$d", did);
+    var shotNow = Convert.ToInt32(c.ExecuteScalar()) > 0;
+    if (shotNow)
+    {
+        var del = conn.CreateCommand();
+        del.CommandText = "DELETE FROM commands WHERE device_id=$d AND command='shot-now'";
+        del.Parameters.AddWithValue("$d", did);
+        del.ExecuteNonQuery();
+    }
+
+    db.Touch(conn, did);
+    var live = app.Services.GetRequiredService<Live>();
+    return Results.Json(new
+    {
+        ok = true,
+        paused = paused == 1,
+        streaming = live.HasViewers(did),
+        shotNow,
+        intervalSec = interval
+    });
+});
+
+app.MapPost("/api/agent/frame", async (HttpRequest req) =>
+{
+    using var conn = db.Open();
+    var t = req.Headers["X-Device-Token"].ToString();
+    var did = db.DeviceId(conn, t);
+    if (did == null) return Results.Json(new { ok = false }, statusCode: 401);
+    if (req.ContentLength is > 4 * 1024 * 1024)
+        return Results.Json(new { ok = false, error = "too large" }, statusCode: 413);
+
+    using var ms = new MemoryStream();
+    await req.Body.CopyToAsync(ms);
+    if (ms.Length == 0) return Results.Json(new { ok = false }, statusCode: 400);
+
+    db.Touch(conn, did);
+    var live = app.Services.GetRequiredService<Live>();
+    if (!live.HasViewers(did)) return Results.Json(new { ok = true, streamed = false });
+    await live.FanoutFrame(did, ms.GetBuffer(), (int)ms.Length);
+    return Results.Json(new { ok = true, streamed = true });
+});
+
+app.MapGet("/mobile/app.apk", () =>
+{
+    var apk = Path.Combine(app.Environment.ContentRootPath, "agent", "PulseDeskMobile.apk");
+    return File.Exists(apk)
+        ? Results.File(apk, "application/vnd.android.package-archive", "PulseDeskMobile.apk")
+        : Results.NotFound();
+});
+
 // ---------------------------------------------------------------- admin api
 app.MapGet("/api/admin/devices", (HttpRequest req) =>
 {
@@ -530,7 +598,8 @@ app.MapGet("/api/admin/invites", (HttpRequest req) =>
 });
 
 // ---------------------------------------------------------------- join page + downloader
-app.MapGet("/join/{code}", (string code) => Results.Content(JoinPage.Html(code, PublicBase), "text/html"));
+app.MapGet("/join/{code}", (HttpContext ctx, string code) =>
+    Results.Content(JoinPage.Html(code, PublicBase, JoinPage.IsMobile(ctx.Request.Headers.UserAgent.ToString())), "text/html"));
 
 app.MapGet("/download/{code}", (string code) =>
 {

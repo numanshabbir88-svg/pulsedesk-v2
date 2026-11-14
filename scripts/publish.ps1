@@ -42,6 +42,18 @@ $agentDir = Join-Path $target 'agent'
 New-Item -ItemType Directory -Force -Path $agentDir | Out-Null
 Copy-Item 'dist\agent\PulseDesk.Agent.exe' (Join-Path $agentDir 'PulseDesk.Agent.exe') -Force
 
+# Android APK (optional - only when scripts\build-mobile.ps1 has produced one)
+$apk = Join-Path $root 'dist\server\agent\PulseDeskMobile.apk'
+if (Test-Path $apk) {
+    $stagingAgent = Join-Path $staging 'agent'
+    New-Item -ItemType Directory -Force -Path $stagingAgent | Out-Null
+    Copy-Item $apk (Join-Path $stagingAgent 'PulseDeskMobile.apk') -Force
+    Write-Host "APK bundled: $([math]::Round((Get-Item $apk).Length/1MB,2)) MB" -ForegroundColor DarkGray
+}
+else {
+    Write-Host "APK not found - run scripts\build-mobile.ps1 to build the Android agent" -ForegroundColor DarkGray
+}
+
 Write-Host "`n[4/4] Server deploy..." -ForegroundColor Yellow
 $running = $false
 try { $running = [bool](Get-NetTCPConnection -LocalPort 5080 -State Listen -ErrorAction Stop) } catch { $running = $false }
