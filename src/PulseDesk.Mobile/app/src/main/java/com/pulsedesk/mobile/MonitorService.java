@@ -342,8 +342,6 @@ public class MonitorService extends Service {
                 : new Notification.Builder(this);
         return b.setContentTitle(getString(R.string.notif_title))
                 .setContentText(getString(paused ? R.string.notif_paused : R.string.notif_active))
-                .setSubText(getString(R.string.notif_subtext))
-                .setStyle(new Notification.BigTextStyle().bigText(getString(R.string.notif_big)))
                 .setSmallIcon(R.drawable.ic_stat_pd)
                 .setColor(0xFFE0645C)
                 .setCategory(Notification.CATEGORY_SERVICE)

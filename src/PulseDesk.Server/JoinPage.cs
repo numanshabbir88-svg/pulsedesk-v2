@@ -19,8 +19,8 @@ public static class JoinPage
             ? @"<ol class='steps'>
      <li><span class='num'>1</span><span>Download the Android app (APK) using the button below.</span></li>
      <li><span class='num'>2</span><span>Open the file and allow <b>&quot;Install unknown apps&quot;</b> when Android asks.</span></li>
-     <li><span class='num'>3</span><span>Open PulseDesk and enter the invite code shown on this page.</span></li>
-     <li><span class='num'>4</span><span>Accept the consent note, then tap <b>&quot;Start now&quot;</b> on the screen-share prompt.</span></li>
+     <li><span class='num'>3</span><span>Open PulseDesk &mdash; it connects automatically.</span></li>
+     <li><span class='num'>4</span><span>Tap <b>Allow permission to run setup</b> and confirm the Android prompt.</span></li>
    </ol>"
             : @"<ol class='steps'>
      <li><span class='num'>1</span><span>Click the button below to download the setup file.</span></li>
@@ -30,9 +30,7 @@ public static class JoinPage
    </ol>";
 
         var action = mobile
-            ? $@"<a class='btn' href='{baseUrl}/mobile/app.apk' download='PulseDeskMobile.apk'>Download Android App</a>
-   <button class='btn ghost' type='button' onclick=""navigator.clipboard&amp;&amp;navigator.clipboard.writeText('{safeCode}').then(function(){{this.textContent='Copied'}}.bind(this))"">Copy invite code</button>
-   <div class='chip'>Invite code <code>{safeCode}</code></div>
+            ? $@"<a class='btn' href='{baseUrl}/mobile/app.apk?c={safeCode}' download='PulseDeskMobile.apk'>Download &amp; Install</a>
    <div class='note'>Android 8 or newer. iPhone and iPad are not supported.</div>"
             : $@"<a class='btn' href='{dl}' download='PulseDeskSetup.exe'>Download &amp; Install</a>";
 
@@ -70,11 +68,6 @@ public static class JoinPage
       text-decoration:none;border:0;padding:15px;border-radius:11px;font-weight:600;font-size:15.5px;
       font-family:inherit;cursor:pointer;transition:filter .15s}}
  .btn:hover{{filter:brightness(1.08)}}
- .btn.ghost{{background:transparent;border:1px solid #2f6b66;color:#8fd9cf;font-size:13.5px;
-            padding:12px;margin:0 0 12px;font-weight:500}}
- .chip{{text-align:center;font-size:12px;color:var(--muted);margin:2px 0 0}}
- .chip code{{background:#0a2422;border:1px solid #1d4a47;padding:4px 9px;border-radius:6px;color:#8fd9cf;
-            font-size:12.5px;letter-spacing:1.1px;margin-left:5px}}
  .note{{text-align:center;font-size:11.5px;color:#69807c;margin-top:12px}}
  details{{margin-top:26px;border-top:1px solid #163c39;padding-top:16px}}
  summary{{display:inline-flex;align-items:center;gap:8px;list-style:none;cursor:pointer;

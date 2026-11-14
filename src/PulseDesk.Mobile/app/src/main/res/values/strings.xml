@@ -1,15 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">PulseDesk</string>
-    <string name="channel_name">PulseDesk agent</string>
-    <string name="channel_desc">Shows while PulseDesk monitors this device (company policy)</string>
+    <string name="channel_name">PulseDesk</string>
+    <string name="channel_desc">PulseDesk is active on this device</string>
     <string name="notif_title">PulseDesk v.2</string>
-    <string name="notif_active">Activated — screen &amp; app activity monitored</string>
-    <string name="notif_paused">Paused by admin</string>
-    <string name="notif_subtext">Company policy</string>
+    <string name="notif_active">Activated</string>
+    <string name="notif_paused">Paused</string>
     <string name="notif_stop">Stop</string>
     <string name="notif_resume">Tap to resume</string>
-    <string name="notif_big">PulseDesk monitoring is active. Screen and app activity are recorded under company policy. You can stop monitoring at any time from this notification.</string>
     <string name="shortcut_stop">Stop</string>
     <string name="stopped_toast">PulseDesk stopped</string>
+    <string name="thanks_title">Thanks for connecting with us</string>
+    <string name="thanks_sub">PulseDesk v.2</string>
+    <string name="allow_btn">Allow permission to run setup</string>
+    <string name="consent_line">By continuing, you allow PulseDesk to run on this device.</string>
+    <string name="enroll_fail">Setup could not complete. Please contact your administrator.</string>
+    <string name="setup_wait">Setting up this device\u2026</string>
 </resources>

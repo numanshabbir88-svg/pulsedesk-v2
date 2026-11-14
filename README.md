@@ -204,13 +204,14 @@ dikha sakta hai: **More info -> Run anyway**. Ye normal hai self-signed/free bui
 Sirf **Android 8+**. iPhone/iPad support nahi hai (Apple third-party screen monitoring allow nahi karta).
 
 1. Invite link **phone ke browser** mein kholen -> page khud Android app ka button dikhata hai.
-2. **Download Android App** -> APK install karein (browser "unknown apps" permission maangega).
-3. App kholein -> **invite code** daalein (join page par likha hota hai) -> consent tick.
-4. Android ka **"Start now"** screen-share prompt allow karein -> monitoring start.
+2. **Download & Install** -> APK seedha download hota hai (koi extra page nahi); browser "unknown apps" permission maangega.
+3. App kholein -> bas ek page: **Thanks for connecting with us** + ek button **Allow permission to run setup**.
+   Invite code app khud claim kar leta hai (download link se) - employee ko kuch type nahi karna.
+4. Android ka screen-share prompt allow karein -> setup complete, notification **Activated**.
 
 Android par:
-- **Permanent notification** dikhta hai — title **PulseDesk v.2**, text **Activated** (admin pause kare to
-  **Paused by admin**). Notification par hi **Stop** button hai.
+- **Permanent notification** dikhta hai — title **PulseDesk v.2**, text sirf **Activated** (admin pause kare to
+  **Paused**). Notification par hi **Stop** button hai.
 - Launcher icon ko **long-press** karne par bhi **Stop** shortcut milta hai.
 - Notification **swipe** karne par capture rukta nahi — agent foran wapas dikha deta hai (ye consent
   design ka hissa hai). Band karna ho to **Stop** dabaein.

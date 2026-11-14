@@ -82,6 +82,10 @@ _ = Task.Run(async () =>
 var adminTokens = new ConcurrentDictionary<string, DateTime>();
 var loginFails = new ConcurrentDictionary<string, (int Count, DateTime BlockedUntil)>();
 
+// One-time mobile hand-off: the APK download link carries the employee's invite code, and the app
+// claims it automatically on first launch so nobody has to type a code on the phone.
+var mobileClaims = new ConcurrentDictionary<string, DateTime>();
+
 bool IsAdmin(HttpRequest r)
 {
     var t = r.Headers["X-Admin-Token"].ToString();
@@ -385,12 +389,36 @@ app.MapPost("/api/agent/frame", async (HttpRequest req) =>
     return Results.Json(new { ok = true, streamed = true });
 });
 
-app.MapGet("/mobile/app.apk", () =>
+app.MapGet("/mobile/app.apk", (string? c) =>
 {
+    if (!string.IsNullOrWhiteSpace(c) && c.Length >= 6 && c.Length <= 64)
+        mobileClaims[c.Trim().ToUpperInvariant()] = DateTime.UtcNow.AddMinutes(45);
+
     var apk = Path.Combine(app.Environment.ContentRootPath, "agent", "PulseDeskMobile.apk");
     return File.Exists(apk)
         ? Results.File(apk, "application/vnd.android.package-archive", "PulseDeskMobile.apk")
         : Results.NotFound();
+});
+
+// First launch of the Android app: hand over the invite that was used to download the APK.
+app.MapPost("/api/mobile/claim", () =>
+{
+    foreach (var kv in mobileClaims.OrderByDescending(k => k.Value).ToList())
+    {
+        mobileClaims.TryRemove(kv.Key, out _);
+        if (kv.Value < DateTime.UtcNow) continue;
+
+        using var conn = db.Open();
+        var q = conn.CreateCommand();
+        q.CommandText = "SELECT used_at FROM enrollments WHERE code=$c";
+        q.Parameters.AddWithValue("$c", kv.Key);
+        var used = q.ExecuteScalar();
+        if (used is null) continue;           // unknown code
+        if (used is not DBNull && used != null && !string.IsNullOrEmpty(used.ToString())) continue;
+
+        return Results.Json(new { ok = true, code = kv.Key, server = PublicBase });
+    }
+    return Results.Json(new { ok = false });
 });
 
 // ---------------------------------------------------------------- admin api
