@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="stop"
+        android:enabled="true"
+        android:icon="@drawable/ic_stat_pd"
+        android:shortcutShortLabel="@string/shortcut_stop"
+        android:shortcutLongLabel="@string/shortcut_stop">
+        <intent
+            android:action="com.pulsedesk.mobile.action.STOP"
+            android:targetPackage="com.pulsedesk.mobile"
+            android:targetClass="com.pulsedesk.mobile.MainActivity" />
+    </shortcut>
+</shortcuts>

@@ -46,7 +46,7 @@ public class MonitorService extends Service {
     private static final String TAG = "PulseDesk";
     private static final String CHANNEL = "pulsedesk";
     private static final int NOTIFICATION_ID = 42;
-    private static final String ACTION_STOP = "com.pulsedesk.mobile.STOP";
+    public static final String ACTION_STOP = "com.pulsedesk.mobile.STOP";
 
     private HandlerThread captureThread;
     private Handler handler;
@@ -225,7 +225,9 @@ public class MonitorService extends Service {
         try {
             String res = Api.get(server + "/api/agent/poll", token);
             JSONObject j = new JSONObject(res);
+            boolean wasPaused = paused;
             paused = j.optBoolean("paused");
+            if (wasPaused != paused) refreshNotification();
             streaming = j.optBoolean("streaming");
             if (j.optBoolean("shotNow")) shotNow = true;
             intervalMs = Math.max(15, j.optInt("intervalSec", 300)) * 1000L;
@@ -301,12 +303,16 @@ public class MonitorService extends Service {
     }
 
     // ---- foreground notification ------------------------------------------
+    private static final long ACTIVATED_AT = System.currentTimeMillis();
+
     private void createChannel() {
         if (Build.VERSION.SDK_INT < 26) return;
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         NotificationChannel ch = new NotificationChannel(CHANNEL,
-                "PulseDesk monitoring", NotificationManager.IMPORTANCE_LOW);
-        ch.setDescription("Shows while screen and app activity are being monitored");
+                getString(R.string.channel_name), NotificationManager.IMPORTANCE_LOW);
+        ch.setDescription(getString(R.string.channel_desc));
+        ch.setShowBadge(false);
+        ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
         nm.createNotificationChannel(ch);
     }
 
@@ -321,14 +327,31 @@ public class MonitorService extends Service {
         Notification.Builder b = Build.VERSION.SDK_INT >= 26
                 ? new Notification.Builder(this, CHANNEL)
                 : new Notification.Builder(this);
-        return b.setContentTitle("PulseDesk monitoring active")
-                .setContentText("Screen + app activity is being recorded (company policy)")
-                .setSmallIcon(android.R.drawable.ic_menu_view)
+        return b.setContentTitle(getString(R.string.notif_title))
+                .setContentText(getString(paused ? R.string.notif_paused : R.string.notif_active))
+                .setSubText(getString(R.string.notif_subtext))
+                .setStyle(new Notification.BigTextStyle().bigText(getString(R.string.notif_big)))
+                .setSmallIcon(R.drawable.ic_stat_pd)
+                .setColor(0xFFE0645C)
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setShowWhen(true)
+                .setWhen(ACTIVATED_AT)
                 .setContentIntent(openPi)
                 .addAction(new Notification.Action.Builder(
-                        android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPi).build())
+                        android.R.drawable.ic_menu_close_clear_cancel,
+                        getString(R.string.notif_stop), stopPi).build())
                 .build();
+    }
+
+    /** Keeps the running notification honest when the admin pauses / resumes. */
+    private void refreshNotification() {
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            if (nm != null) nm.notify(NOTIFICATION_ID, buildNotification());
+        } catch (Exception ignored) { }
     }
 
     private void startInForeground() {

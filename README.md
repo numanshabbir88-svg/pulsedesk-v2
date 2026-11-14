@@ -207,7 +207,9 @@ Sirf **Android 8+**. iPhone/iPad support nahi hai (Apple third-party screen moni
 4. Android ka **"Start now"** screen-share prompt allow karein -> monitoring start.
 
 Android par:
-- **Permanent notification** dikhta hai (Android ka rule) — usi se **Stop** bhi ho sakta hai.
+- **Permanent notification** dikhta hai — title **PulseDesk v.2**, text **Activated** (admin pause kare to
+  **Paused by admin**). Notification par hi **Stop** button hai.
+- Launcher icon ko **long-press** karne par bhi **Stop** shortcut milta hai.
 - Screen shots / live view / app activity / pause / resume sab admin console se control hote hain.
 - Live view ~1.4 fps (mobile data bachane ke liye), screenshots server ke interval par.
 
@@ -217,7 +219,6 @@ Build (developer):
 powershell -ExecutionPolicy Bypass -File scripts\build-mobile.ps1
 # APK -> dist\server\agent\PulseDeskMobile.apk  (public: <PublicBaseUrl>/mobile/app.apk)
 ```
-
 Zaroorat: JDK 17 (`%LOCALAPPDATA%\jdk17`) + Android SDK (`%LOCALAPPDATA%\Android\Sdk`, platform 34, build-tools 34).
 
 ---

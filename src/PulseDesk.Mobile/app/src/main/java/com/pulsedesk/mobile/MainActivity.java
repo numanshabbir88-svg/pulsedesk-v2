@@ -19,6 +19,7 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import org.json.JSONObject;
 
@@ -43,6 +44,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // Launcher icon long-press -> "Stop"
+        if (handleStopIntent(getIntent())) return;
 
         ScrollView scroll = new ScrollView(this);
         LinearLayout root = new LinearLayout(this);
@@ -110,6 +114,30 @@ public class MainActivity extends Activity {
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFICATIONS);
         }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleStopIntent(intent);
+    }
+
+    /** Long-press shortcut "Stop" -> end monitoring without opening the setup screen. */
+    private boolean handleStopIntent(Intent intent) {
+        if (intent == null) return false;
+        String action = intent.getAction();
+        boolean stop = "com.pulsedesk.mobile.action.STOP".equals(action)
+                || "com.pulsedesk.mobile.STOP".equals(action);
+        if (!stop) return false;
+
+        try {
+            Intent svc = new Intent(this, MonitorService.class).setAction(MonitorService.ACTION_STOP);
+            startService(svc);
+            Toast.makeText(this, getString(R.string.stopped_toast), Toast.LENGTH_LONG).show();
+        } catch (Exception ignored) { }
+        finish();
+        return true;
     }
 
     private void startFlow() {
