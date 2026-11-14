@@ -1,0 +1,21 @@
+# ---- build output ----
+bin/
+obj/
+*.user
+.vs/
+TestResults/
+
+# ---- published app + runtime data (binaries, DB, screenshots, secrets) ----
+dist/
+*.db
+*.db-wal
+*.db-shm
+data/
+
+# ---- logs ----
+*.log
+logs/
+
+# ---- local secrets ----
+ADMIN_PASSWORD.txt
+appsettings.Production.json

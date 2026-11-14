@@ -1,0 +1,34 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{3F76026F-59AF-47E9-BD28-A28069D1D29F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PulseDesk.Server", "src\PulseDesk.Server\PulseDesk.Server.csproj", "{92641EED-25F8-48AC-A832-822983610DA7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PulseDesk.Agent", "src\PulseDesk.Agent\PulseDesk.Agent.csproj", "{016F8B9E-B4C9-40A2-8EDB-E049B8A8F86C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{92641EED-25F8-48AC-A832-822983610DA7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{92641EED-25F8-48AC-A832-822983610DA7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{92641EED-25F8-48AC-A832-822983610DA7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{92641EED-25F8-48AC-A832-822983610DA7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{016F8B9E-B4C9-40A2-8EDB-E049B8A8F86C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{016F8B9E-B4C9-40A2-8EDB-E049B8A8F86C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{016F8B9E-B4C9-40A2-8EDB-E049B8A8F86C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{016F8B9E-B4C9-40A2-8EDB-E049B8A8F86C}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{92641EED-25F8-48AC-A832-822983610DA7} = {3F76026F-59AF-47E9-BD28-A28069D1D29F}
+		{016F8B9E-B4C9-40A2-8EDB-E049B8A8F86C} = {3F76026F-59AF-47E9-BD28-A28069D1D29F}
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PulseDesk v.2 - Admin Console</title>
+<style>
+  :root{
+    --bg:#061416; --panel:#0b2224; --panel2:#0e2b2c; --line:#16403d;
+    --text:#dfece8; --muted:#8faeaa; --teal:#0d3b39; --coral:#e0645c;
+    --ok:#3fbf9a; --warn:#e0a95c; --bad:#e0605c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:'Segoe UI',Arial,sans-serif;font-size:14px}
+  button{font-family:inherit}
+  #login{position:fixed;inset:0;display:grid;place-items:center;background:radial-gradient(circle at 50% 25%,#123f3c,#04100f 70%);z-index:50}
+  .loginbox{width:340px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:28px}
+  .brand{font-size:24px;font-weight:700;letter-spacing:.3px}
+  .brand span{color:var(--coral)}
+  .brand small{display:block;font-size:11px;letter-spacing:2px;color:var(--muted);font-weight:500;margin-top:2px;text-transform:uppercase}
+  .brand .v2{font-style:normal;font-size:12px;font-weight:700;color:var(--coral);margin-left:4px;vertical-align:super}
+  input,select,textarea{width:100%;background:#082021;border:1px solid var(--line);color:var(--text);
+    padding:11px 12px;border-radius:9px;font-size:14px;outline:none;font-family:inherit}
+  input:focus{border-color:#2b6b66}
+  .btn{background:var(--coral);color:#fff;border:0;padding:11px 18px;border-radius:9px;font-weight:600;cursor:pointer;font-size:14px}
+  .btn:hover{filter:brightness(1.08)}
+  .btn.ghost{background:#123634;color:var(--text);border:1px solid var(--line)}
+  .btn.sm{padding:7px 12px;font-size:12.5px;border-radius:7px}
+  .btn:disabled{opacity:.5;cursor:default}
+  #app{display:none;min-height:100vh}
+  aside{position:fixed;left:0;top:0;bottom:0;width:210px;background:#081c1e;border-right:1px solid var(--line);padding:20px 14px;display:flex;flex-direction:column;gap:6px}
+  aside .brand{margin-bottom:18px;padding-left:6px}
+  .nav{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:9px;color:var(--muted);cursor:pointer;font-size:13.5px}
+  .nav:hover{background:#0d2829;color:var(--text)}
+  .nav.active{background:#123634;color:#fff}
+  .nav .dot{width:7px;height:7px;border-radius:50%;background:var(--coral);opacity:.85}
+  main{margin-left:210px;padding:24px 28px 60px}
+  h1{font-size:20px;font-weight:600;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:12.5px;margin-bottom:20px}
+  .grid{display:grid;gap:14px}
+  .cards{grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:20px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:16px}
+  .card .k{color:var(--muted);font-size:11.5px;letter-spacing:1.1px;text-transform:uppercase}
+  .card .v{font-size:26px;font-weight:700;margin-top:6px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;color:var(--muted);font-weight:500;font-size:11.5px;letter-spacing:1px;text-transform:uppercase;
+     padding:10px 10px;border-bottom:1px solid var(--line)}
+  td{padding:11px 10px;border-bottom:1px solid #0f3030;vertical-align:top}
+  tr.dev:hover{background:#0d2829;cursor:pointer}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;padding:3px 9px;border-radius:20px;background:#123634;color:var(--muted)}
+  .pill.on{background:#0e3b30;color:#63e0b8}
+  .pill.off{background:#2a1b1b;color:#e08a85}
+  .mono{font-family:Consolas,monospace;font-size:12.5px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .spacer{flex:1}
+  .shotgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+  .shotgrid img{width:100%;border-radius:9px;border:1px solid var(--line);display:block;background:#04100f}
+  .bar{height:7px;border-radius:6px;background:#123634;overflow:hidden}
+  .bar > i{display:block;height:100%;background:linear-gradient(90deg,#2aa893,#63e0b8)}
+  .toast{position:fixed;right:20px;bottom:20px;background:#123634;border:1px solid #2b6b66;padding:12px 16px;
+    border-radius:10px;font-size:13px;opacity:0;transition:.25s;z-index:60}
+  .toast.show{opacity:1}
+  #liveWrap{position:relative;background:#04100f;border:1px solid var(--line);border-radius:12px;overflow:hidden;
+    aspect-ratio:16/9;display:grid;place-items:center}
+  #liveImg{width:100%;height:100%;object-fit:contain;display:none}
+  #liveMsg{color:var(--muted);font-size:13px}
+  .tag{font-size:10.5px;padding:2px 7px;border-radius:5px;background:#123634;color:var(--muted);letter-spacing:.6px}
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="loginbox">
+    <div class="brand">Pulse<span>Desk</span><em class="v2">v.2</em><small>Admin console</small></div>
+    <p style="color:var(--muted);font-size:12.5px;margin:18px 0 14px">Company monitoring - admin login</p>
+    <input id="pw" type="password" placeholder="Admin password" onkeydown="if(event.key==='Enter')doLogin()"/>
+    <button class="btn" style="width:100%;margin-top:12px" onclick="doLogin()">Sign in</button>
+    <p id="loginErr" style="color:var(--bad);font-size:12.5px;margin:12px 0 0;min-height:16px"></p>
+  </div>
+</div>
+
+<div id="app">
+  <aside>
+    <div class="brand">Pulse<span>Desk</span><em class="v2">v.2</em><small>Admin</small></div>
+    <div class="nav active" data-v="devices"><span class="dot"></span>Devices</div>
+    <div class="nav" data-v="live"><span class="dot"></span>Live screen</div>
+    <div class="nav" data-v="activity"><span class="dot"></span>Activity</div>
+    <div class="nav" data-v="shots"><span class="dot"></span>Screenshots</div>
+    <div class="nav" data-v="alerts"><span class="dot"></span>Alerts</div>
+    <div class="nav" data-v="invites"><span class="dot"></span>Invites</div>
+    <div class="spacer"></div>
+    <div class="nav" onclick="logout()"><span class="dot" style="background:#8faeaa"></span>Sign out</div>
+  </aside>
+
+  <main>
+    <!-- DEVICES -->
+    <section id="v-devices">
+      <h1>Devices</h1>
+      <div class="sub">Sab enrolled computers - auto refresh har 5 second</div>
+      <div class="grid cards" id="statCards"></div>
+      <div class="panel">
+        <table>
+          <thead><tr><th>Device</th><th>User</th><th>Status</th><th>Last seen</th><th>Consent</th><th>Actions</th></tr></thead>
+          <tbody id="devRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- LIVE -->
+    <section id="v-live" class="hidden">
+      <h1>Live screen</h1>
+      <div class="sub" id="liveSub">Device select karein</div>
+      <div class="row" style="margin-bottom:12px">
+        <select id="liveDev" style="max-width:300px" onchange="startLive()"></select>
+        <button class="btn sm ghost" onclick="startLive()">Connect</button>
+        <button class="btn sm ghost" onclick="stopLive()">Disconnect</button>
+        <span class="spacer"></span>
+        <span class="pill" id="liveState"><span class="dot" style="width:6px;height:6px;border-radius:50%;background:#8faeaa"></span> idle</span>
+      </div>
+      <div id="liveWrap">
+        <img id="liveImg" alt="live"/>
+        <div id="liveMsg">Live view connect karein</div>
+      </div>
+    </section>
+
+    <!-- ACTIVITY -->
+    <section id="v-activity" class="hidden">
+      <h1>Activity</h1>
+      <div class="sub">App usage + window titles</div>
+      <div class="row" style="margin-bottom:14px">
+        <select id="actDev" style="max-width:300px" onchange="loadActivity()"></select>
+        <select id="actRange" style="max-width:160px" onchange="loadActivity()">
+          <option value="60">Last 1 hour</option>
+          <option value="180" selected>Last 3 hours</option>
+          <option value="480">Last 8 hours</option>
+          <option value="1440">Last 24 hours</option>
+        </select>
+      </div>
+      <div class="grid" style="grid-template-columns:1fr 1fr;align-items:start">
+        <div class="panel"><div class="k" style="color:var(--muted);font-size:11.5px;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px">Top applications</div><div id="appSum"></div></div>
+        <div class="panel"><div class="k" style="color:var(--muted);font-size:11.5px;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px">Recent samples</div>
+          <div style="max-height:420px;overflow:auto"><table><tbody id="actRows"></tbody></table></div></div>
+      </div>
+    </section>
+
+    <!-- SHOTS -->
+    <section id="v-shots" class="hidden">
+      <h1>Screenshots</h1>
+      <div class="sub">Agent interval ke mutabiq captures</div>
+      <div class="row" style="margin-bottom:14px">
+        <select id="shotDev" style="max-width:300px" onchange="loadShots()"></select>
+        <button class="btn sm" onclick="shotNow()">Take screenshot now</button>
+      </div>
+      <div class="shotgrid" id="shotGrid"></div>
+    </section>
+
+    <!-- ALERTS -->
+    <section id="v-alerts" class="hidden">
+      <h1>Alerts</h1>
+      <div class="sub">Enrollment, control changes aur policy events</div>
+      <div class="panel"><table><tbody id="alertRows"></tbody></table></div>
+    </section>
+
+    <!-- INVITES -->
+    <section id="v-invites" class="hidden">
+      <h1>Invites</h1>
+      <div class="sub">Employee ka email daalein - install link chala jayega</div>
+      <div class="panel" style="margin-bottom:16px">
+        <div class="row">
+          <input id="invEmail" placeholder="employee@company.com" style="flex:1;min-width:220px"/>
+          <input id="invNote" placeholder="Note (optional)" style="flex:1;min-width:200px"/>
+          <button class="btn" onclick="createInvite()">Send invite</button>
+        </div>
+        <p class="sub" style="margin:10px 0 0" id="invResult"></p>
+      </div>
+      <div class="panel">
+        <table><thead><tr><th>Code</th><th>Email</th><th>Created</th><th>Status</th><th>Link</th></tr></thead>
+        <tbody id="invRows"></tbody></table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let TOKEN = localStorage.getItem('pds_token') || '';
+let devices = [];
+let liveWs = null, liveObjUrl = null;
+
+const $ = s => document.querySelector(s);
+const api = async (path, opts={}) => {
+  const r = await fetch(path, {
+    ...opts,
+    headers: { 'Content-Type':'application/json', 'X-Admin-Token': TOKEN, ...(opts.headers||{}) }
+  });
+  if (r.status === 401) { logout(); throw new Error('unauthorized'); }
+  if (!r.ok) throw new Error(await r.text() || r.status);
+  const ct = r.headers.get('content-type')||'';
+  return ct.includes('json') ? r.json() : r.text();
+};
+const toast = msg => { const t=$('#toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2600); };
+const fmt = ts => { if(!ts) return '-'; const d=new Date(ts); return isNaN(d)?'':d.toLocaleString(); };
+const ago = ts => { const d=new Date(ts||0); if(isNaN(d)) return '-'; const s=(Date.now()-d)/1000;
+  if(s<60) return Math.round(s)+'s ago'; if(s<3600) return Math.round(s/60)+'m ago';
+  if(s<86400) return Math.round(s/3600)+'h ago'; return Math.round(s/86400)+'d ago'; };
+
+async function doLogin(){
+  try{
+    const r = await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({password: $('#pw').value})});
+    const j = await r.json();
+    if(!j.ok){ $('#loginErr').textContent = j.error || 'Login failed'; return; }
+    TOKEN = j.token; localStorage.setItem('pds_token', TOKEN);
+    $('#login').style.display='none'; $('#app').style.display='block';
+    boot();
+  }catch(e){ $('#loginErr').textContent='Server error'; }
+}
+function logout(){ TOKEN=''; localStorage.removeItem('pds_token'); location.reload(); }
+
+document.querySelectorAll('.nav[data-v]').forEach(n => n.onclick = () => {
+  document.querySelectorAll('.nav').forEach(x=>x.classList.remove('active'));
+  n.classList.add('active');
+  document.querySelectorAll('main section').forEach(s=>s.classList.add('hidden'));
+  $('#v-'+n.dataset.v).classList.remove('hidden');
+  if(n.dataset.v==='activity') loadActivity();
+  if(n.dataset.v==='shots') loadShots();
+  if(n.dataset.v==='alerts') loadAlerts();
+  if(n.dataset.v==='invites') loadInvites();
+  if(n.dataset.v!=='live') stopLive();
+});
+
+async function boot(){ await loadDevices(); setInterval(loadDevices, 5000); loadAlerts(); }
+
+async function loadDevices(){
+  try{ devices = await api('/api/admin/devices'); }catch(e){ return; }
+  const online = devices.filter(d=>d.online).length;
+  const paused = devices.filter(d=>d.paused).length;
+  const totalSamples = devices.reduce((a,d)=>a+(d.samples||0),0);
+  $('#statCards').innerHTML = [
+    ['Devices', devices.length], ['Online', online], ['Paused', paused], ['Samples', totalSamples.toLocaleString()]
+  ].map(([k,v])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  $('#devRows').innerHTML = devices.map(d=>`
+    <tr class="dev" onclick="pickDevice('${d.id}')">
+      <td><b>${esc(d.name)}</b><div class="mono" style="color:var(--muted);font-size:11px">${d.id.slice(0,8)}</div></td>
+      <td>${esc(d.user)}<div style="color:var(--muted);font-size:11.5px">${esc(d.email||'')}</div></td>
+      <td><span class="pill ${d.online?'on':'off'}">${d.online?'online':'offline'}</span></td>
+      <td>${ago(d.lastSeen)}</td>
+      <td>${d.consentAt? '<span class="pill on">consented</span>' : '<span class="pill off">none</span>'}</td>
+      <td class="row" style="gap:6px" onclick="event.stopPropagation()">
+        <button class="btn sm ghost" onclick="cmd('${d.id}','${d.paused?'resume':'pause'}')">${d.paused?'Resume':'Pause'}</button>
+        <button class="btn sm ghost" onclick="cmd('${d.id}','shot-now')">Shot</button>
+      </td>
+    </tr>`).join('') || `<tr><td colspan="6" style="color:var(--muted);padding:22px">Koi device nahi. Invites tab se employee add karein.</td></tr>`;
+  fillDeviceSelects();
+}
+function esc(s){ return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fillDeviceSelects(){
+  const opts = devices.map(d=>`<option value="${d.id}">${esc(d.name)} - ${esc(d.user)}</option>`).join('');
+  ['#liveDev','#actDev','#shotDev'].forEach(sel=>{
+    const el=$(sel); const cur=el.value;
+    el.innerHTML = opts || '<option value="">no devices</option>';
+    if(cur) el.value = cur;
+  });
+}
+function pickDevice(id){
+  document.querySelector('.nav[data-v="live"]').click();
+  $('#liveDev').value = id; startLive();
+}
+async function cmd(deviceId, command){
+  await api('/api/admin/command',{method:'POST',body:JSON.stringify({deviceId,command})});
+  toast('Command sent: '+command); loadDevices();
+}
+
+/* ---------------- live */
+function startLive(){
+  stopLive();
+  const id = $('#liveDev').value; if(!id){ toast('No device'); return; }
+  const proto = location.protocol==='https:'?'wss':'ws';
+  liveWs = new WebSocket(`${proto}://${location.host}/ws/admin?token=${encodeURIComponent(TOKEN)}&deviceId=${id}`);
+  liveWs.binaryType='blob';
+  $('#liveState').className='pill on'; $('#liveState').textContent='connecting';
+  liveWs.onopen = ()=>{ $('#liveState').className='pill on'; $('#liveState').textContent='streaming'; };
+  liveWs.onmessage = ev => {
+    if(typeof ev.data === 'string') return;
+    if(liveObjUrl) URL.revokeObjectURL(liveObjUrl);
+    liveObjUrl = URL.createObjectURL(ev.data);
+    const img=$('#liveImg'); img.src=liveObjUrl; img.style.display='block'; $('#liveMsg').style.display='none';
+  };
+  liveWs.onclose = ()=>{ $('#liveState').className='pill off'; $('#liveState').textContent='disconnected'; };
+  liveWs.onerror = ()=>{ $('#liveState').className='pill off'; $('#liveState').textContent='error'; };
+}
+function stopLive(){ if(liveWs){ try{liveWs.close()}catch(e){} liveWs=null; } $('#liveState').className='pill'; $('#liveState').textContent='idle'; }
+
+/* ---------------- activity */
+async function loadActivity(){
+  const id = $('#actDev').value; if(!id) return;
+  const mins = $('#actRange').value;
+  const [sum, rows] = await Promise.all([
+    api(`/api/admin/summary?deviceId=${id}&minutes=${mins}`),
+    api(`/api/admin/activity?deviceId=${id}&minutes=${mins}`)
+  ]);
+  const max = Math.max(1, ...sum.map(s=>s.samples));
+  $('#appSum').innerHTML = sum.map(s=>`
+    <div style="margin-bottom:11px">
+      <div class="row" style="justify-content:space-between;margin-bottom:4px">
+        <span style="font-size:13px">${esc(s.process)}</span>
+        <span style="color:var(--muted);font-size:11.5px">${s.samples}</span>
+      </div>
+      <div class="bar"><i style="width:${Math.round(s.samples/max*100)}%"></i></div>
+    </div>`).join('') || '<div style="color:var(--muted)">No data</div>';
+  $('#actRows').innerHTML = rows.slice(0,200).map(r=>`
+    <tr><td style="width:70px;color:var(--muted);font-size:11.5px">${fmt(r.ts).split(', ')[1]||''}</td>
+    <td><b style="font-size:12.5px">${esc(r.process)}</b><div style="color:var(--muted);font-size:11.5px">${esc(r.title)}</div></td>
+    <td>${r.active?'<span class="pill on">active</span>':'<span class="pill">idle</span>'}</td></tr>`).join('')
+    || '<tr><td style="color:var(--muted);padding:20px">No samples yet</td></tr>';
+}
+
+/* ---------------- shots */
+async function loadShots(){
+  const id = $('#shotDev').value; if(!id) return;
+  const list = await api(`/api/admin/shots?deviceId=${id}&limit=48`);
+  $('#shotGrid').innerHTML = '';
+  for(const s of list){
+    const r = await fetch(s.url,{headers:{'X-Admin-Token':TOKEN}});
+    if(!r.ok) continue;
+    const blob = await r.blob();
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(blob); img.title = fmt(s.ts);
+    img.onload = ()=>URL.revokeObjectURL(img.src);
+    $('#shotGrid').appendChild(img);
+  }
+  if(!list.length) $('#shotGrid').innerHTML = '<div style="color:var(--muted)">No screenshots yet</div>';
+}
+async function shotNow(){
+  const id = $('#shotDev').value; if(!id) return;
+  await cmd(id,'shot-now'); toast('Screenshot requested'); setTimeout(loadShots, 4000);
+}
+
+/* ---------------- alerts */
+async function loadAlerts(){
+  const list = await api('/api/admin/alerts?limit=120');
+  $('#alertRows').innerHTML = list.map(a=>`
+    <tr><td style="width:150px;color:var(--muted);font-size:11.5px">${fmt(a.ts)}</td>
+    <td style="width:110px"><span class="tag">${esc(a.kind)}</span></td>
+    <td>${esc(a.message)}<div style="color:var(--muted);font-size:11.5px">${esc(a.device)}</div></td></tr>`).join('')
+    || '<tr><td style="color:var(--muted);padding:20px">No alerts</td></tr>';
+}
+
+/* ---------------- invites */
+async function createInvite(){
+  const email = $('#invEmail').value.trim();
+  if(!email){ toast('Email daalein'); return; }
+  const j = await api('/api/admin/invite',{method:'POST',body:JSON.stringify({email, note:$('#invNote').value.trim()})});
+  $('#invResult').innerHTML = `Link ready: <span class="mono" style="color:#7fd8cc">${j.link}</span> 
+    <button class="btn sm ghost" style="margin-left:8px" onclick="copyLink('${j.link}')">Copy link</button>
+    ${j.emailSent?'<span class="pill on" style="margin-left:8px">email sent</span>':'<span class="pill" style="margin-left:8px">SMTP not configured - link copy karein</span>'}`;
+  loadInvites();
+}
+function copyLink(url){
+  if(navigator.clipboard && window.isSecureContext){ navigator.clipboard.writeText(url).then(()=>toast('Link copied')).catch(()=>toast(url)); }
+  else { const t=document.createElement('textarea'); t.value=url; document.body.appendChild(t); t.select();
+         try{ document.execCommand('copy'); toast('Link copied'); }catch(e){ toast(url); } t.remove(); }
+}
+async function loadInvites(){
+  const list = await api('/api/admin/invites');
+  $('#invRows').innerHTML = list.map(i=>`
+    <tr><td class="mono">${i.code}</td><td>${esc(i.email)}</td><td style="font-size:12px">${fmt(i.created)}</td>
+    <td>${i.used?'<span class="pill on">used</span>':'<span class="pill">pending</span>'}</td>
+    <td><span class="mono" style="font-size:11.5px;color:#7fd8cc">/join/${i.code}</span></td></tr>`).join('')
+    || '<tr><td colspan="5" style="color:var(--muted);padding:20px">No invites</td></tr>';
+}
+
+if(TOKEN){ $('#login').style.display='none'; $('#app').style.display='block'; boot(); }
+</script>
+</body>
+</html>
