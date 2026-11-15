@@ -42,6 +42,7 @@ Repo mein sirf source + scripts hain — `bin/`, `obj/`, `dist/` (binaries, SQLi
 |---|---|
 | Remote mouse + keyboard control (Windows agent) | ✅ |
 | Live view: full screen, minimize, quality selector | ✅ |
+| Phone/tablet console (PWA + touch control) | ✅ |
 | Devices list, online/offline, last seen | ✅ |
 | Live screen view (WebSocket JPEG stream) | ✅ |
 | Screen recording / periodic screenshots | ✅ |

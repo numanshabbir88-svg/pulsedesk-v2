@@ -1,4 +1,4 @@
-# PulseDesk v.2 — Admin Guide
+﻿# PulseDesk v.2 — Admin Guide
 
 Employee monitoring for company-owned Android phones. This guide covers:
 
@@ -158,7 +158,37 @@ Work-profile enrolment keeps personal data and does **not** require a factory re
 
 ---
 
-## 6. Verification checklist (after each enrolment)
+## 6. Phone / tablet se admin console (PWA)
+
+Dashboard ko phone par app ki tarah install kiya ja sakta hai — usi console se laptops monitor
+aur control hote hain.
+
+- [ ] Phone browser (Chrome / Edge / Safari) me public URL kholo:
+      `https://desktop-l21qf2i.taila5e0e7.ts.net/pulsedesk/index.html`
+      (LAN par: `http://<PC-IP>:5080`).
+- [ ] Agar Tailscale use kar rahe hain to phone par **Tailscale app** installed + same account
+      me login hona chahiye. Warna LAN IP use karein.
+- [ ] Admin password se **Sign in** (token phone me save ho jata hai, dobara nahi poochta).
+- [ ] Browser menu → **Add to home screen / Install app**. Ab icon se full-screen console khulta hai.
+- [ ] Mobile layout: navigation upar ek horizontal bar me aa jati hai; tables side me scroll hoti hain.
+- [ ] **Live screen** → device → **Connect** → tap se full screen.
+- [ ] **Remote control** ON karo, phir:
+      * **Tap** = left click
+      * **Long press (~0.5s)** = right click
+      * **Drag** = mouse move
+      * neeche touch bar: text box + **Send text**, **Enter / Esc / Tab / Backspace**, **▲ ▼ Scroll**
+- [ ] Kaam khatam → **Stop control** (laptop par banner bhi gayab ho jayega).
+
+Mahdoodiyat (mobile par):
+
+- Live view aur screenshots har phone par chalta hai; remote control sirf **Windows** agents par.
+- Phone keyboard shortcuts (Ctrl+C etc.) mobile browsers nahi bhejte — text box se normal typing karein.
+- Bahut chhoti screen par live image ki tafseel kam dikhti hai; detail ke liye `Quality: Sharp` chunein.
+- Elevation wali windows (Task Manager / UAC) par click nahi jata — Windows ka integrity level rok.
+
+---
+
+## 7. Verification checklist (after each enrolment)
 
 | Check | Expected |
 |---|---|
@@ -172,7 +202,7 @@ Work-profile enrolment keeps personal data and does **not** require a factory re
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 - **"App not installed" / signature mismatch** — an older debug-signed PulseDesk is installed.
   Run `adb uninstall com.pulsedesk.mobile` (or uninstall from Settings), then reinstall.
@@ -191,7 +221,7 @@ Work-profile enrolment keeps personal data and does **not** require a factory re
 
 ---
 
-## 8. Command reference
+## 9. Command reference
 
 ```powershell
 # build the Android APK into dist\server\agent\PulseDeskMobile.apk
@@ -217,7 +247,7 @@ $env:JAVA_HOME = "$env:LOCALAPPDATA\msjdk17\jdk-17.0.21.0.2+1"
 
 ---
 
-## 9. Legal / policy notes (do not skip)
+## 10. Legal / policy notes (do not skip)
 
 - PulseDesk is **consent-based**: permanent notification, visible status, and a **Stop** action.
   Keep it that way — a hidden build gets auto-removed by Play Protect and creates legal exposure.
@@ -229,3 +259,4 @@ $env:JAVA_HOME = "$env:LOCALAPPDATA\msjdk17\jdk-17.0.21.0.2+1"
   signed APK, USB/adb, or MDM.
 - Keep `keystore\pulsedesk-release.jks`, its password, and `appsettings.json` out of public
   repositories.
+

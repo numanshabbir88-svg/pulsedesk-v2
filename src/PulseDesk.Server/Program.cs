@@ -15,7 +15,14 @@ var db = app.Services.GetRequiredService<Db>();
 db.Init();
 
 app.UseDefaultFiles();
-app.UseStaticFiles();
+// .webmanifest is not in the default MIME map - serve it explicitly so Chrome/Edge/Safari
+// accept the PWA manifest instead of treating it as a generic octet-stream download.
+var staticTypes = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
+staticTypes.Mappings[".webmanifest"] = "application/manifest+json";
+app.UseStaticFiles(new Microsoft.AspNetCore.Builder.StaticFileOptions
+{
+    ContentTypeProvider = staticTypes
+});
 
 // ---------------------------------------------------------------- config
 var cfg = app.Configuration;

@@ -2,8 +2,32 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>PulseDesk v.2 - Admin Console</title>
+<!-- The console is reachable both at the server root and through a reverse-proxy sub-path
+     (e.g. https://host/pulsedesk). Compute the base from the current URL so the manifest,
+     icons and service worker resolve correctly in both cases. -->
+<script>
+  (function () {
+    var p = location.pathname || '/';
+    var base = /\/$/.test(p) ? p : (/[^/]*\.[^/]*$/.test(p) ? p.replace(/[^/]*$/, '') : p + '/');
+    window.PDS_BASE = base;
+    function add(rel, href, attrs) {
+      var l = document.createElement('link');
+      l.rel = rel; l.href = base + href;
+      if (attrs) for (var k in attrs) l.setAttribute(k, attrs[k]);
+      document.head.appendChild(l);
+    }
+    add('manifest', 'manifest.webmanifest');
+    add('icon', 'icon-192.png', { sizes: '192x192', type: 'image/png' });
+    add('apple-touch-icon', 'icon-192.png');
+  })();
+</script>
+<meta name="theme-color" content="#061416" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="PulseDesk" />
 <style>
   :root{
     --bg:#061416; --panel:#0b2224; --panel2:#0e2b2c; --line:#16403d;
@@ -76,6 +100,33 @@
   #liveStage.control #liveHint{color:#ffb4ae}
   .tag{font-size:10.5px;padding:2px 7px;border-radius:5px;background:#123634;color:var(--muted);letter-spacing:.6px}
   .hidden{display:none!important}
+
+  /* ---- mobile / tablet ---- */
+  #touchBar{display:none;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
+  #touchBar input{flex:1;min-width:150px}
+  #touchBar .btn.sm{padding:10px 12px}
+  .tscroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  @media (max-width:760px){
+    aside{position:sticky;top:0;left:0;right:0;bottom:auto;width:auto;height:auto;flex-direction:row;
+      align-items:center;gap:2px;padding:8px 8px;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line);
+      z-index:30;scrollbar-width:none}
+    aside::-webkit-scrollbar{display:none}
+    aside .brand,aside .spacer{display:none}
+    .nav{white-space:nowrap;font-size:12.5px;padding:8px 10px;gap:6px}
+    .nav .dot{display:none}
+    main{margin-left:0;padding:16px 14px 70px;max-width:100%;overflow-x:hidden}
+    h1{font-size:18px}
+    .grid{grid-template-columns:1fr!important}
+    .cards{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))!important}
+    .card .v{font-size:22px}
+    input,select,textarea{font-size:16px}
+    .tscroll table{min-width:640px}
+    #liveImg{max-height:none}
+    #liveWrap{padding:4px;min-height:180px}
+    #liveHint{font-size:11.5px}
+    .toast{right:12px;left:12px;bottom:12px;max-width:none;text-align:center}
+  }
+  body.touch #touchBar{display:flex}
 </style>
 </head>
 <body>
@@ -110,10 +161,12 @@
       <div class="sub">Sab enrolled computers - auto refresh har 5 second</div>
       <div class="grid cards" id="statCards"></div>
       <div class="panel">
+        <div class="tscroll">
         <table>
           <thead><tr><th>Device</th><th>User</th><th>Status</th><th>Last seen</th><th>Consent</th><th>Actions</th></tr></thead>
           <tbody id="devRows"></tbody>
         </table>
+        </div>
       </div>
     </section>
 
@@ -143,6 +196,22 @@
         </div>
       </div>
       <div id="liveHint">Tip: image par click karein -> full screen. Remote control ON hone par aapka mouse/keyboard device par chalta hai.</div>
+
+      <!-- phone / tablet remote control -->
+      <div id="touchBar">
+        <input id="touchText" placeholder="Type text for the laptop..." autocomplete="off"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();touchSendText();}"/>
+        <button class="btn sm" onclick="touchSendText()">Send text</button>
+        <button class="btn sm ghost" onclick="touchKey('Enter')">Enter</button>
+        <button class="btn sm ghost" onclick="touchKey('Escape')">Esc</button>
+        <button class="btn sm ghost" onclick="touchKey('Tab')">Tab</button>
+        <button class="btn sm ghost" onclick="touchKey('Backspace')">&#9003;</button>
+        <button class="btn sm ghost" onclick="touchScroll(-3)">&#9650; Scroll</button>
+        <button class="btn sm ghost" onclick="touchScroll(3)">&#9660; Scroll</button>
+      </div>
+      <div id="touchHint" class="sub" style="display:none;margin:6px 0 0">
+        Tap = left click &middot; Long press = right click &middot; Drag = move mouse
+      </div>
     </section>
 
     <!-- ACTIVITY -->
@@ -211,8 +280,11 @@ let devices = [];
 let liveWs = null, liveObjUrl = null;
 
 const $ = s => document.querySelector(s);
+// Works both at the server root and behind a reverse-proxy sub-path (e.g. /pulsedesk).
+const API_BASE = window.PDS_BASE || '/';
+const withBase = p => API_BASE + String(p || '').replace(/^\//, '');
 const api = async (path, opts={}) => {
-  const r = await fetch(path, {
+  const r = await fetch(withBase(path), {
     ...opts,
     headers: { 'Content-Type':'application/json', 'X-Admin-Token': TOKEN, ...(opts.headers||{}) }
   });
@@ -229,7 +301,7 @@ const ago = ts => { const d=new Date(ts||0); if(isNaN(d)) return '-'; const s=(D
 
 async function doLogin(){
   try{
-    const r = await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},
+    const r = await fetch(withBase('/api/admin/login'),{method:'POST',headers:{'Content-Type':'application/json'},
       body: JSON.stringify({password: $('#pw').value})});
     const j = await r.json();
     if(!j.ok){ $('#loginErr').textContent = j.error || 'Login failed'; return; }
@@ -312,7 +384,7 @@ function startLive(){
   const id = $('#liveDev').value; if(!id){ toast('No device'); return; }
   liveDevice = id;
   const proto = location.protocol==='https:'?'wss':'ws';
-  liveWs = new WebSocket(`${proto}://${location.host}/ws/admin?token=${encodeURIComponent(TOKEN)}&deviceId=${id}`);
+  liveWs = new WebSocket(`${proto}://${location.host}${API_BASE}ws/admin?token=${encodeURIComponent(TOKEN)}&deviceId=${id}`);
   liveWs.binaryType='blob';
   $('#liveState').className='pill on'; $('#liveState').textContent='connecting';
   liveWs.onopen = ()=>{ $('#liveState').className='pill on'; $('#liveState').textContent='streaming'; applyQuality(true); };
@@ -392,12 +464,13 @@ function liveNorm(e){
 function liveButton(e){ return e.button === 2 ? 'right' : (e.button === 1 ? 'middle' : 'left'); }
 
 $('#liveImg').addEventListener('click', e => {
+  if(fromTouch(e)) return;
   if(!liveDevice){ return; }
   if(!controlOn && !document.fullscreenElement) toggleFullscreen();
 });
-$('#liveImg').addEventListener('dblclick', e => { e.preventDefault(); toggleFullscreen(); });
+$('#liveImg').addEventListener('dblclick', e => { if(fromTouch(e)) return; e.preventDefault(); toggleFullscreen(); });
 $('#liveImg').addEventListener('mousemove', e => {
-  if(!controlOn) return;
+  if(fromTouch(e) || !controlOn) return;
   const now = performance.now();
   if(now - lastMoveSent < 60) return;
   lastMoveSent = now;
@@ -405,13 +478,13 @@ $('#liveImg').addEventListener('mousemove', e => {
   liveSend({ cmd:'input', kind:'move', x:p.x, y:p.y });
 });
 $('#liveImg').addEventListener('mousedown', e => {
-  if(!controlOn) return;
+  if(fromTouch(e) || !controlOn) return;
   e.preventDefault();
   const p = liveNorm(e);
   liveSend({ cmd:'input', kind:'click', button:liveButton(e), down:true, x:p.x, y:p.y });
 });
 $('#liveImg').addEventListener('mouseup', e => {
-  if(!controlOn) return;
+  if(fromTouch(e) || !controlOn) return;
   e.preventDefault();
   const p = liveNorm(e);
   liveSend({ cmd:'input', kind:'click', button:liveButton(e), down:false, x:p.x, y:p.y });
@@ -422,6 +495,77 @@ $('#liveImg').addEventListener('wheel', e => {
   e.preventDefault();
   liveSend({ cmd:'input', kind:'wheel', delta: e.deltaY > 0 ? -120 : 120 });
 }, { passive:false });
+
+/* ---- touch remote control (phone / tablet) ----
+   Tap = left click, long press = right click, drag = move mouse. */
+let touchStart = null, touchLongTimer = null, lastTouchMove = 0;
+const fromTouch = e => !!(e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents);
+
+function touchSend(obj){ if(controlOn) liveSend(obj); }
+
+$('#liveImg').addEventListener('pointerdown', e => {
+  if(e.pointerType !== 'touch' || !liveDevice) return;
+  if(!controlOn){ if(!document.fullscreenElement) toggleFullscreen(); return; }
+  e.preventDefault();
+  const p = liveNorm(e);
+  touchStart = { x:p.x, y:p.y, cx:e.clientX, cy:e.clientY, moved:false, done:false };
+  touchSend({ cmd:'input', kind:'move', x:p.x, y:p.y });
+  clearTimeout(touchLongTimer);
+  touchLongTimer = setTimeout(() => {
+    if(!touchStart || touchStart.moved) return;
+    touchStart.done = true;
+    touchSend({ cmd:'input', kind:'click', button:'right', down:true, x:touchStart.x, y:touchStart.y });
+    touchSend({ cmd:'input', kind:'click', button:'right', down:false, x:touchStart.x, y:touchStart.y });
+    if(navigator.vibrate) navigator.vibrate(30);
+  }, 550);
+}, { passive:false });
+
+$('#liveImg').addEventListener('pointermove', e => {
+  if(e.pointerType !== 'touch' || !touchStart || touchStart.done) return;
+  e.preventDefault();
+  if(Math.hypot(e.clientX - touchStart.cx, e.clientY - touchStart.cy) > 8) touchStart.moved = true;
+  const now = performance.now();
+  if(now - lastTouchMove < 70) return;
+  lastTouchMove = now;
+  const p = liveNorm(e);
+  touchSend({ cmd:'input', kind:'move', x:p.x, y:p.y });
+}, { passive:false });
+
+$('#liveImg').addEventListener('pointerup', e => {
+  if(e.pointerType !== 'touch' || !touchStart) return;
+  clearTimeout(touchLongTimer);
+  const st = touchStart; touchStart = null;
+  if(st.done || st.moved) return;
+  touchSend({ cmd:'input', kind:'click', button:'left', down:true, x:st.x, y:st.y });
+  touchSend({ cmd:'input', kind:'click', button:'left', down:false, x:st.x, y:st.y });
+});
+$('#liveImg').addEventListener('pointercancel', () => { clearTimeout(touchLongTimer); touchStart = null; });
+
+function touchNeedControl(){
+  if(controlOn) return true;
+  toast('Pehle "Remote control" ON karein');
+  return false;
+}
+function touchSendText(){
+  if(!touchNeedControl()) return;
+  const el = $('#touchText');
+  const text = el.value || '';
+  if(!text) return;
+  liveSend({ cmd:'input', kind:'text', text });
+  el.value = '';
+}
+function touchKey(name){
+  if(!touchNeedControl()) return;
+  const vk = vkFor({ code:name, key:name });
+  if(!vk){ toast('Key not mapped: ' + name); return; }
+  liveSend({ cmd:'input', kind:'key', vk, down:true });
+  liveSend({ cmd:'input', kind:'key', vk, down:false });
+}
+function touchScroll(steps){
+  if(!touchNeedControl()) return;
+  const n = Math.max(1, Math.min(10, Math.abs(steps) || 1));
+  for(let i = 0; i < n; i++) liveSend({ cmd:'input', kind:'wheel', delta: steps < 0 ? 120 : -120 });
+}
 
 /* keyboard: capture only while remote control is on */
 function vkFor(e){
@@ -444,8 +588,14 @@ function vkFor(e){
 const LIVE_NAV_KEYS = new Set(['Tab','Backspace',' ','Spacebar','ArrowUp','ArrowDown','ArrowLeft','ArrowRight',
   'PageUp','PageDown','Home','End','Delete','Enter']);
 
+const isTypingTarget = e => {
+  const t = e.target;
+  return !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable));
+};
+
 document.addEventListener('keydown', e => {
   if(!controlOn || !liveWs || liveWs.readyState !== 1) return;
+  if(isTypingTarget(e)) return;   // phone text box / password field keeps its own typing
   const vk = vkFor(e);
   const mod = e.ctrlKey || e.altKey || e.metaKey;
   if(vk && LIVE_NAV_KEYS.has(e.key)) e.preventDefault();
@@ -462,6 +612,7 @@ document.addEventListener('keydown', e => {
 
 document.addEventListener('keyup', e => {
   if(!controlOn || !liveWs || liveWs.readyState !== 1) return;
+  if(isTypingTarget(e)) return;
   const mod = e.ctrlKey || e.altKey || e.metaKey;
   if(e.key && e.key.length === 1 && !mod) return;   // typed as text, no keyup needed
   const vk = vkFor(e); if(!vk) return;
@@ -499,7 +650,7 @@ async function loadShots(){
   const list = await api(`/api/admin/shots?deviceId=${id}&limit=48`);
   $('#shotGrid').innerHTML = '';
   for(const s of list){
-    const r = await fetch(s.url,{headers:{'X-Admin-Token':TOKEN}});
+    const r = await fetch(withBase(s.url),{headers:{'X-Admin-Token':TOKEN}});
     if(!r.ok) continue;
     const blob = await r.blob();
     const img = document.createElement('img');
@@ -549,6 +700,16 @@ async function loadInvites(){
 }
 
 if(TOKEN){ $('#login').style.display='none'; $('#app').style.display='block'; boot(); }
+
+/* ---------------- phone / PWA shell ---------------- */
+if(('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0){
+  document.body.classList.add('touch');
+  const th = $('#touchHint'); if(th) th.style.display = 'block';
+}
+if('serviceWorker' in navigator && (location.protocol === 'https:' || ['localhost','127.0.0.1'].includes(location.hostname))){
+  const base = window.PDS_BASE || '/';
+  window.addEventListener('load', () => navigator.serviceWorker.register(base + 'sw.js', { scope: base }).catch(()=>{}));
+}
 </script>
 </body>
 </html>
