@@ -67,9 +67,11 @@ PulseDesk/
     PulseDesk.Server/     ASP.NET Core (minimal API) + dashboard (wwwroot/index.html)
     PulseDesk.Agent/      Windows agent (user session: screen + activity collector)
     PulseDesk.Mobile/     Android agent (Java, MediaProjection + foreground service)
+    docs/ADMIN-GUIDE.md   admin setup + per-phone activation (invite link / adb / MDM)
   scripts/
     publish.ps1           build + publish into dist\ (live admin config preserve karta hai)
     build-mobile.ps1      Android APK build -> dist\server\agent\PulseDeskMobile.apk
+    install-mobile.ps1    USB se ek phone par APK install + invite code (Play Protect prompt nahi)
     start-all.ps1         server + tunnel start (tunnel URL auto-detect)
     set-password.ps1      admin password set + server restart
     deploy-server-elevated.ps1  staged server update ko elevated deploy karta hai

@@ -7,9 +7,9 @@ $proj = Join-Path $root 'src\PulseDesk.Mobile'
 # ---- JDK 17 (Gradle 8.7 cannot run on the JDK bundled with Android Studio 25) ----
 $javaHome = $null
 foreach ($candidate in @('msjdk17', 'jdk17ok', 'jdk17')) {
-    $root = Join-Path $env:LOCALAPPDATA $candidate
-    if (-not (Test-Path $root)) { continue }
-    $javaHome = (Get-ChildItem $root -Directory |
+    $jdkRoot = Join-Path $env:LOCALAPPDATA $candidate
+    if (-not (Test-Path $jdkRoot)) { continue }
+    $javaHome = (Get-ChildItem $jdkRoot -Directory |
                  Where-Object { Test-Path (Join-Path $_.FullName 'bin\java.exe') } |
                  Select-Object -First 1).FullName
     if ($javaHome) { break }
@@ -34,7 +34,26 @@ Write-Host "JDK    : $javaHome" -ForegroundColor DarkGray
 Write-Host "SDK    : $sdk" -ForegroundColor DarkGray
 Write-Host "Gradle : $($gradle.FullName)" -ForegroundColor DarkGray
 
-& $gradle.FullName -p $proj assembleRelease --no-daemon
+# ---- release signing: pass the PULSEDESK_* keys explicitly ----
+# gradle.properties is usually picked up automatically, but passing them on the command line
+# guarantees the APK is signed with the release key even if property resolution misbehaves.
+$propsFile = Join-Path $proj 'gradle.properties'
+$signArgs = @()
+if (Test-Path $propsFile) {
+    foreach ($line in Get-Content $propsFile) {
+        if ($line -match '^\s*(PULSEDESK_[A-Z_]+)\s*=\s*(.+?)\s*$') {
+            $signArgs += "-P$($Matches[1])=$($Matches[2])"
+        }
+    }
+}
+$keystore = Join-Path $proj 'keystore\pulsedesk-release.jks'
+if ($signArgs.Count -gt 0 -and (Test-Path $keystore)) {
+    Write-Host "Signing: RELEASE key (keystore\pulsedesk-release.jks)" -ForegroundColor Green
+} else {
+    Write-Host "Signing: DEBUG key (release keystore / gradle.properties missing)" -ForegroundColor Yellow
+}
+
+& $gradle.FullName -p $proj assembleRelease --no-daemon @signArgs
 if ($LASTEXITCODE -ne 0) { throw "gradle build failed ($LASTEXITCODE)" }
 
 $apk = Get-ChildItem (Join-Path $proj 'app\build\outputs\apk\release') -Filter '*.apk' | Select-Object -First 1
