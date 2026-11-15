@@ -34,6 +34,8 @@ public sealed class Collector : BackgroundService
     // remote control (Windows only): mouse + keyboard are accepted only while the admin
     // has switched it on for this device.
     private volatile bool _controlOn;
+    private volatile bool _inputSeen;
+    private long _lastControlSeen;
     private volatile int _liveWidth = 1600;
     private volatile int _liveQuality = 65;
     private volatile int _liveIntervalMs = 350;
@@ -67,6 +69,15 @@ public sealed class Collector : BackgroundService
         {
             try
             {
+                // Safety watchdog: if the admin console stops sending heartbeats / input for
+                // 45 seconds, release remote control so the employee never stays locked out.
+                if (_controlOn && Environment.TickCount64 - _lastControlSeen > 45_000)
+                {
+                    _controlOn = false;
+                    ControlBanner.Hide();
+                    Settings.Log("remote control auto-released (no admin heartbeat)");
+                }
+
                 if (!_s.Paused && !_srvPaused)
                 {
                     var (proc, title) = Native.Foreground();
@@ -289,16 +300,30 @@ public sealed class Collector : BackgroundService
                 // ---- remote control (mouse + keyboard) ----
                 case "control-on":
                     _controlOn = true;
+                    _inputSeen = false;
+                    _lastControlSeen = Environment.TickCount64;
                     ControlBanner.Show();
-                    Settings.Log("remote control ON by admin");
+                    Settings.Log("remote control ON by admin (employee input will be blocked)");
                     break;
                 case "control-off":
                     _controlOn = false;
                     ControlBanner.Hide();
-                    Settings.Log("remote control OFF by admin");
+                    Settings.Log("remote control OFF by admin (employee input restored)");
+                    break;
+                case "ping":
+                    _lastControlSeen = Environment.TickCount64;
                     break;
                 case "input":
-                    if (_controlOn) HandleInput(j);
+                    if (_controlOn)
+                    {
+                        _lastControlSeen = Environment.TickCount64;
+                        if (!_inputSeen)
+                        {
+                            _inputSeen = true;
+                            Settings.Log("remote input received from admin");
+                        }
+                        HandleInput(j);
+                    }
                     break;
             }
         }

@@ -396,7 +396,7 @@ function startLive(){
   };
   liveWs.onclose = ()=>{
     $('#liveState').className='pill off'; $('#liveState').textContent='disconnected';
-    if(controlOn){ controlOn=false; setControlUi(); }
+    if(controlOn){ controlOn=false; stopControlPing(); setControlUi(); }
   };
   liveWs.onerror = ()=>{ $('#liveState').className='pill off'; $('#liveState').textContent='error'; };
 }
@@ -404,6 +404,7 @@ function stopLive(){
   if(controlOn && liveWs && liveWs.readyState === 1){
     liveWs.send(JSON.stringify({cmd:'control-off'}));
   }
+  stopControlPing();
   controlOn = false; setControlUi();
   if(liveWs){ try{liveWs.close()}catch(e){} liveWs=null; }
   $('#liveState').className='pill'; $('#liveState').textContent='idle';
@@ -430,14 +431,25 @@ document.addEventListener('fullscreenchange', ()=>{
 });
 
 /* ---- remote control (mouse + keyboard) ---- */
+let controlPing = null;
+function startControlPing(){
+  stopControlPing();
+  controlPing = setInterval(()=>liveSend({cmd:'ping'}), 8000);
+}
+function stopControlPing(){
+  if(controlPing){ clearInterval(controlPing); controlPing = null; }
+}
+
 async function toggleControl(){
   if(!liveDevice){ toast('Connect a device first'); return; }
   const next = !controlOn;
   try{
     await cmd(liveDevice, next ? 'control-on' : 'control-off');
     controlOn = next;
+    if(next) startControlPing(); else stopControlPing();
     setControlUi();
     $('#liveStage').focus();
+    if(next) toast('Remote control ON - employee ka keyboard/mouse block hai');
   }catch(e){ toast('Control failed'); }
 }
 function setControlUi(){
@@ -450,7 +462,7 @@ function setControlUi(){
   if(st) st.classList.toggle('control', controlOn);
   const h = $('#liveHint');
   if(h) h.textContent = controlOn
-    ? 'Remote control ON - aapka mouse/keyboard is device par ja raha hai. Rokne ke liye "Stop control".'
+    ? 'Remote control ON - employee ka keyboard/mouse BLOCK hai, aapka mouse/keyboard chal raha hai. Rokne ke liye "Stop control".'
     : 'Tip: image par click karein -> full screen. Remote control ON hone par aapka mouse/keyboard device par chalta hai.';
 }
 

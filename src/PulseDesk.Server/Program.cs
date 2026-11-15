@@ -737,7 +737,13 @@ app.Map("/ws/admin", async (HttpContext ctx) =>
     finally
     {
         live.RemoveViewer(deviceId, ws);
-        await live.NotifyAgent(deviceId, "{\"cmd\":\"stream\",\"on\":false}");
+        if (!live.HasViewers(deviceId))
+        {
+            await live.NotifyAgent(deviceId, "{\"cmd\":\"stream\",\"on\":false}");
+            // Safety: never leave the employee's keyboard/mouse blocked when the admin tab
+            // closes, loses network or the session ends without pressing "Stop control".
+            await live.SendCommand(deviceId, "control-off");
+        }
     }
 });
 

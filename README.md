@@ -41,6 +41,7 @@ Repo mein sirf source + scripts hain — `bin/`, `obj/`, `dist/` (binaries, SQLi
 | Feature | Status |
 |---|---|
 | Remote mouse + keyboard control (Windows agent) | ✅ |
+| Employee keyboard/mouse locked while admin controls | ✅ |
 | Live view: full screen, minimize, quality selector | ✅ |
 | Phone/tablet console (PWA + touch control) | ✅ |
 | Devices list, online/offline, last seen | ✅ |

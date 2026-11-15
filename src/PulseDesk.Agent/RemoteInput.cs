@@ -73,6 +73,7 @@ internal static class RemoteInput
         int x = b.Left + (int)Math.Round(Math.Clamp(nx, 0, 1) * (b.Width - 1));
         int y = b.Top + (int)Math.Round(Math.Clamp(ny, 0, 1) * (b.Height - 1));
         SetCursorPos(x, y);
+        InputLock.SetTarget(x, y);
     }
 
     public static void Button(string button, bool down)
@@ -164,6 +165,7 @@ internal static class RemoteInput
 internal static class ControlBanner
 {
     private static Form? _form;
+    private static System.Windows.Forms.Timer? _pulse;
     private static readonly object _gate = new();
     private static bool _started;
 
@@ -205,6 +207,10 @@ internal static class ControlBanner
         {
             f.Visible = visible;
             if (visible) f.TopMost = true;
+
+            // employee keyboard + mouse are blocked only while control is on
+            if (visible) InputLock.Enable(); else InputLock.Disable();
+            if (_pulse != null) { if (visible) _pulse.Start(); else _pulse.Stop(); }
         }
         catch { }
     }
@@ -230,13 +236,18 @@ internal static class ControlBanner
                 };
                 f.Controls.Add(new Label
                 {
-                    Text = "PulseDesk - remote control active (admin)",
+                    Text = "PulseDesk - admin control active (keyboard + mouse locked)",
                     ForeColor = Color.FromArgb(223, 236, 232),
                     Font = new Font("Segoe UI", 9.5f),
                     Dock = DockStyle.Fill,
                     TextAlign = ContentAlignment.MiddleCenter
                 });
                 _form = f;
+
+                // keeps the cursor pinned where the admin left it (employee mouse cannot drift it)
+                _pulse = new System.Windows.Forms.Timer { Interval = 120 };
+                _pulse.Tick += (_, _) => InputLock.ReassertCursor();
+
                 _ = f.Handle;
                 Application.Run(new ApplicationContext(f));
             }

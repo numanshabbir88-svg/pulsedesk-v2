@@ -148,11 +148,16 @@ Work-profile enrolment keeps personal data and does **not** require a factory re
 - [ ] **Quality: Sharp / Balanced / Fast** — Sharp = 1920px @ 80%, Balanced = 1600px @ 68% (~3 fps),
       Fast = 1280px @ 52% (slow internet / mobile data).
 - [ ] **Remote control** dabao → "Stop control" ho jata hai. Iske baad:
-      * mouse move, left/right/middle click, scroll — sab device par chalta hai
+      * employee ka **keyboard + mouse block** ho jata hai (local input swallow hota hai)
+      * admin ka mouse move, left/right/middle click, scroll — sab device par chalta hai
       * keyboard: normal typing, Enter/Tab/Esc/Backspace, arrows, F1–F12, Ctrl/Alt/Shift shortcuts
-      * device par ek chhota banner dikhta hai: *"PulseDesk - remote control active (admin)"*
-- [ ] **Stop control** dabao (ya full screen se bahar aao) → input band, banner gayab, dashboard
+      * device par ek chhota banner dikhta hai: *"PulseDesk - admin control active (keyboard + mouse locked)"*
+- [ ] **Stop control** dabao → employee ka input foran wapas, banner gayab, dashboard
       **Alerts** me "remote control START/STOP" record ho jata hai.
+- [ ] Safety: admin ka tab band / network cut ho jaye to **45 second** baad control khud release ho jata
+      hai (agent heartbeat dekhta hai) — employee permanently locked nahi rehta.
+- [ ] Ctrl+Alt+Del hamesha kaam karta hai (Windows security screen hook nahi hoti) — employee ke paas
+      emergency exit rehta hai.
 - [ ] Remote control sirf **Windows agent** par hai (Android nahi). Live screen sirf **primary**
       monitor capture karti hai — second display nahi aata (isliye pehle image "crop" lagti thi).
 
@@ -218,6 +223,19 @@ Mahdoodiyat (mobile par):
   phone and enrol one phone at a time.
 - **Server not reachable from outside** — Tailscale must be running on the server PC, or use the
   LAN IP in `PublicBaseUrl` for phones on the same Wi-Fi.
+- **Remote control: mouse/keyboard nahi chalta** — check list:
+  1. Laptop par **naya agent** install hua ho (purana build `control-on` ignore karta hai).
+     Naya version: dashboard → Invites → us laptop ke liye setup dobara chalao.
+  2. Dashboard → Live screen → **Connect** pehle, phir **Remote control**.
+  3. Laptop par banner dikhna chahiye: *"PulseDesk - admin control active (keyboard + mouse locked)"*.
+     Banner na aaye to agent chal hi nahi raha.
+  4. `%ProgramData%\PulseDesk\agent.log` me ye lines honi chahiye:
+     `input lock: ON (employee keyboard/mouse blocked)` aur `remote input received from admin`.
+  5. Laptop sleep / lock screen par ho to pehle unlock karo — lock screen par input nahi jata.
+- **Employee ka input band nahi ho raha** — agent purana hai (upar point 1). Naya agent low-level
+  hooks se local input swallow karta hai; koi setting enable karne ki zaroorat nahi.
+- **Remote control khud band ho gaya** — safety feature: admin tab band / network drop par
+  45 second me auto-release. Dobara **Remote control** dabao.
 
 ---
 
