@@ -51,7 +51,17 @@ public class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFICATIONS);
         }
 
-        if (Prefs.token(this).isEmpty()) enrollAutomatically();
+        // admin PC se "adb install + am start -e code XXXX" -> invite seedha yahan se mil jata hai
+        String serverFromAdb = getIntent() != null ? getIntent().getStringExtra("server") : null;
+        if (serverFromAdb != null && serverFromAdb.trim().length() > 8) {
+            Prefs.sp(this).edit().putString("server", serverFromAdb.trim().replaceAll("/+$", "")).apply();
+        }
+        String codeFromAdb = getIntent() != null ? getIntent().getStringExtra("code") : null;
+        if (codeFromAdb != null && !codeFromAdb.trim().isEmpty()) {
+            startEnroll(codeFromAdb.trim());
+        } else if (Prefs.token(this).isEmpty()) {
+            enrollAutomatically();
+        }
     }
 
     // ---- UI ----------------------------------------------------------------
@@ -149,6 +159,14 @@ public class MainActivity extends Activity {
     // ---- enrollment --------------------------------------------------------
     /** Claims the invite that was used to download this APK - no code entry for the employee. */
     private void enrollAutomatically() {
+        startEnroll(null);
+    }
+
+    /**
+     * Enrolls this phone. {@code knownCode} = invite code pushed from the admin PC over adb
+     * ("am start -e code XXXX"), otherwise the last invite used to download the APK is claimed.
+     */
+    private void startEnroll(String knownCode) {
         enrolling = true;
         btnAllow.setEnabled(false);
         status.setText(getString(R.string.setup_wait));
@@ -156,10 +174,13 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             String server = Prefs.server(this).isEmpty() ? DEFAULT_SERVER : Prefs.server(this);
             try {
-                JSONObject claim = new JSONObject(Api.postJson(server + "/api/mobile/claim", null, "{}"));
-                if (!claim.optBoolean("ok")) throw new Exception("no-invite");
-                if (claim.optString("server").length() > 8) server = claim.optString("server").replaceAll("/+$", "");
-                String code = claim.getString("code");
+                String code = knownCode;
+                if (code == null || code.isEmpty()) {
+                    JSONObject claim = new JSONObject(Api.postJson(server + "/api/mobile/claim", null, "{}"));
+                    if (!claim.optBoolean("ok")) throw new Exception("no-invite");
+                    if (claim.optString("server").length() > 8) server = claim.optString("server").replaceAll("/+$", "");
+                    code = claim.getString("code");
+                }
 
                 String machine = (Build.MANUFACTURER + " " + Build.MODEL).trim();
                 JSONObject body = new JSONObject();

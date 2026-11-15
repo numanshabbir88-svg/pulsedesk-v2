@@ -1,0 +1,13 @@
+org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+android.useAndroidX=false
+android.nonTransitiveRClass=true
+
+# ---- release signing (copy this file to gradle.properties and fill in) ----
+# gradle.properties is git-ignored on purpose: it holds the release keystore password.
+# Without PULSEDESK_STORE_FILE the build falls back to the debug key (fine for local
+# testing, NOT for MDM / store / employee rollout).
+#
+# PULSEDESK_STORE_FILE=keystore/pulsedesk-release.jks
+# PULSEDESK_STORE_PASSWORD=change-me
+# PULSEDESK_KEY_ALIAS=pulsedesk
+# PULSEDESK_KEY_PASSWORD=change-me

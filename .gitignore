@@ -29,3 +29,12 @@ src/PulseDesk.Mobile/local.properties
 # ---- local secrets ----
 ADMIN_PASSWORD.txt
 appsettings.Production.json
+
+# ---- Android release signing (NEVER commit: repo is public) ----
+src/PulseDesk.Mobile/gradle.properties
+src/PulseDesk.Mobile/keystore/*.jks
+src/PulseDesk.Mobile/keystore/*.keystore
+*.jks
+*.keystore
+# signing template stays in the repo
+!src/PulseDesk.Mobile/gradle.properties.example

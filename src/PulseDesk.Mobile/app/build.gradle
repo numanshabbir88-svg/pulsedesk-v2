@@ -2,6 +2,14 @@ plugins {
     id 'com.android.application'
 }
 
+// Release key comes from gradle.properties (PULSEDESK_*). Read it once, at the top level,
+// so the value is plain Groovy and never depends on closure delegation.
+def pdStorePath = project.findProperty('PULSEDESK_STORE_FILE')
+def pdHasReleaseKey = pdStorePath != null && rootProject.file(pdStorePath).exists()
+def pdStorePassword = project.findProperty('PULSEDESK_STORE_PASSWORD')
+def pdKeyAlias = project.findProperty('PULSEDESK_KEY_ALIAS')
+def pdKeyPassword = project.findProperty('PULSEDESK_KEY_PASSWORD')
+
 android {
     namespace 'com.pulsedesk.mobile'
     compileSdk 34
@@ -10,8 +18,20 @@ android {
         applicationId "com.pulsedesk.mobile"
         minSdk 26
         targetSdk 34
-        versionCode 4
-        versionName "2.1"
+        versionCode 5
+        versionName "2.2"
+    }
+
+    signingConfigs {
+        release {
+            if (pdHasReleaseKey) {
+                // path is relative to src\PulseDesk.Mobile (project root), not the app\ module
+                storeFile rootProject.file(pdStorePath)
+                storePassword pdStorePassword
+                keyAlias pdKeyAlias
+                keyPassword pdKeyPassword
+            }
+        }
     }
 
     compileOptions {
@@ -25,12 +45,18 @@ android {
         }
         release {
             minifyEnabled false
-            // testing build: signed with the auto-generated debug key so the APK installs directly
-            signingConfig signingConfigs.debug
+            signingConfig pdHasReleaseKey ? signingConfigs.release : signingConfigs.debug
         }
     }
 
     lint {
         abortOnError false
+    }
+}
+
+// Quick check: gradle -p src\PulseDesk.Mobile pdSigningInfo
+tasks.register('pdSigningInfo') {
+    doLast {
+        println "PulseDesk signing: " + (pdHasReleaseKey ? "RELEASE (${pdStorePath})" : "DEBUG fallback - release key not found")
     }
 }

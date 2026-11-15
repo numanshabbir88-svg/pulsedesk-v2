@@ -627,7 +627,24 @@ app.MapGet("/api/admin/invites", (HttpRequest req) =>
 
 // ---------------------------------------------------------------- join page + downloader
 app.MapGet("/join/{code}", (HttpContext ctx, string code) =>
-    Results.Content(JoinPage.Html(code, PublicBase, JoinPage.IsMobile(ctx.Request.Headers.UserAgent.ToString())), "text/html"));
+{
+    var ua = ctx.Request.Headers.UserAgent.ToString();
+
+    // Android: the invite link itself is the install. Start the APK download straight away so the
+    // employee never sees a landing page and never has to tap a second time.
+    if (ua.Contains("Android", StringComparison.OrdinalIgnoreCase))
+    {
+        var apk = Path.Combine(app.Environment.ContentRootPath, "agent", "PulseDeskMobile.apk");
+        if (File.Exists(apk))
+        {
+            if (!string.IsNullOrWhiteSpace(code))
+                mobileClaims[code.Trim().ToUpperInvariant()] = DateTime.UtcNow.AddMinutes(45);
+            return Results.File(apk, "application/vnd.android.package-archive", "PulseDeskMobile.apk");
+        }
+    }
+
+    return Results.Content(JoinPage.Html(code, PublicBase, JoinPage.IsMobile(ua)), "text/html");
+});
 
 app.MapGet("/download/{code}", (string code) =>
 {
