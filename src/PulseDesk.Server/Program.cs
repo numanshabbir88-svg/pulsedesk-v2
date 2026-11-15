@@ -702,6 +702,8 @@ app.Map("/ws/agent", async (HttpContext ctx) =>
             if (res.MessageType == WebSocketMessageType.Close) break;
             if (res.MessageType == WebSocketMessageType.Binary)
                 await live.FanoutFrame(did, buf, res.Count);
+            else if (res.MessageType == WebSocketMessageType.Text)
+                await live.FanoutText(did, Encoding.UTF8.GetString(buf, 0, res.Count));
         }
     }
     catch { }

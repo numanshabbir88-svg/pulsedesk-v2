@@ -29,6 +29,64 @@ internal static class Native
     [DllImport("user32.dll")]
     internal static extern int GetSystemMetrics(int nIndex);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr OpenInputDesktop(uint dwFlags, bool fInherit, uint dwDesiredAccess);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool CloseDesktop(IntPtr hDesktop);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool GetUserObjectInformation(IntPtr hObj, int nIndex,
+        System.Text.StringBuilder pvInfo, int nLength, out int lpnLengthNeeded);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint SetThreadExecutionState(uint esFlags);
+
+    private const uint DESKTOP_SWITCHDESKTOP = 0x0100;
+    private const int UOI_NAME = 2;
+    private const uint ES_CONTINUOUS = 0x80000000;
+    private const uint ES_SYSTEM_REQUIRED = 0x00000001;
+    private const uint ES_DISPLAY_REQUIRED = 0x00000002;
+
+    /// <summary>
+    /// True when Windows is showing the lock screen / secure desktop (Logon UI).
+    /// PulsesDesk cannot type/send input there - Windows blocks injection into that desktop.
+    /// </summary>
+    internal static bool IsScreenLocked()
+    {
+        IntPtr desk = IntPtr.Zero;
+        try
+        {
+            desk = OpenInputDesktop(0, false, DESKTOP_SWITCHDESKTOP);
+            if (desk == IntPtr.Zero) return true;   // secure desktop active, cannot open it
+            var sb = new System.Text.StringBuilder(64);
+            if (GetUserObjectInformation(desk, UOI_NAME, sb, sb.Capacity * 2, out _))
+            {
+                var name = sb.ToString().Trim();
+                return name.Length > 0 && !name.Equals("Default", StringComparison.OrdinalIgnoreCase);
+            }
+            return false;
+        }
+        catch { return false; }
+        finally
+        {
+            if (desk != IntPtr.Zero) CloseDesktop(desk);
+        }
+    }
+
+    /// <summary>
+    /// Keeps the display/session awake while the admin is in control, so the laptop does not
+    /// fall asleep or auto-lock in the middle of a support session. State is per thread.
+    /// </summary>
+    internal static void KeepAwake(bool on)
+    {
+        try
+        {
+            SetThreadExecutionState(ES_CONTINUOUS | (on ? ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED : 0));
+        }
+        catch { }
+    }
+
     internal const int SM_XVIRTUALSCREEN = 76;
     internal const int SM_YVIRTUALSCREEN = 77;
     internal const int SM_CXVIRTUALSCREEN = 78;

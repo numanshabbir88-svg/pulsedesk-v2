@@ -95,6 +95,17 @@ internal static class RemoteInput
         Click(horizontal ? HWHEEL : WHEEL, unchecked((uint)delta));
     }
 
+    /// <summary>Harmless key tap (F15) used to reset the idle timer / wake the display.</summary>
+    public static void Nudge()
+    {
+        try
+        {
+            Key(0x7E, true);   // VK_F15 - no application uses it
+            Key(0x7E, false);
+        }
+        catch { }
+    }
+
     private static void Click(uint flag, uint data)
     {
         var inp = new INPUT[1];

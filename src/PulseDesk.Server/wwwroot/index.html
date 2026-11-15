@@ -188,6 +188,7 @@
         </select>
         <span class="spacer"></span>
         <span class="pill" id="liveState"><span class="dot" style="width:6px;height:6px;border-radius:50%;background:#8faeaa"></span> idle</span>
+        <span class="pill off" id="lockPill" style="display:none" title="Windows lock screen active">LOCKED</span>
       </div>
       <div id="liveWrap">
         <div id="liveStage" tabindex="0">
@@ -368,6 +369,7 @@ async function cmd(deviceId, command){
 
 /* ---------------- live */
 let controlOn = false, liveDevice = '', lastMoveSent = 0;
+let statusTimer = null, liveLocked = false, lockToastShown = false;
 
 const QUALITY = {
   sharp:    { width: 1920, q: 80, ms: 420 },
@@ -387,15 +389,16 @@ function startLive(){
   liveWs = new WebSocket(`${proto}://${location.host}${API_BASE}ws/admin?token=${encodeURIComponent(TOKEN)}&deviceId=${id}`);
   liveWs.binaryType='blob';
   $('#liveState').className='pill on'; $('#liveState').textContent='connecting';
-  liveWs.onopen = ()=>{ $('#liveState').className='pill on'; $('#liveState').textContent='streaming'; applyQuality(true); };
+  liveWs.onopen = ()=>{ $('#liveState').className='pill on'; $('#liveState').textContent='streaming'; applyQuality(true); startStatusPoll(); };
   liveWs.onmessage = ev => {
-    if(typeof ev.data === 'string') return;
+    if(typeof ev.data === 'string'){ handleAgentText(ev.data); return; }
     if(liveObjUrl) URL.revokeObjectURL(liveObjUrl);
     liveObjUrl = URL.createObjectURL(ev.data);
     const img=$('#liveImg'); img.src=liveObjUrl; img.style.display='block'; $('#liveMsg').style.display='none';
   };
   liveWs.onclose = ()=>{
     $('#liveState').className='pill off'; $('#liveState').textContent='disconnected';
+    stopStatusPoll(); setLockUi(false);
     if(controlOn){ controlOn=false; stopControlPing(); setControlUi(); }
   };
   liveWs.onerror = ()=>{ $('#liveState').className='pill off'; $('#liveState').textContent='error'; };
@@ -405,6 +408,7 @@ function stopLive(){
     liveWs.send(JSON.stringify({cmd:'control-off'}));
   }
   stopControlPing();
+  stopStatusPoll(); setLockUi(false);
   controlOn = false; setControlUi();
   if(liveWs){ try{liveWs.close()}catch(e){} liveWs=null; }
   $('#liveState').className='pill'; $('#liveState').textContent='idle';
@@ -414,6 +418,31 @@ function applyQuality(quiet){
   const p = QUALITY[$('#liveQuality').value] || QUALITY.balanced;
   liveSend({ cmd:'quality', width:p.width, q:p.q, ms:p.ms });
   if(!quiet) toast('Stream quality: ' + $('#liveQuality').value);
+}
+
+/* ---- lock state (reported by the agent; cannot be seen from the video) ---- */
+function startStatusPoll(){
+  stopStatusPoll();
+  const ask = () => liveSend({ cmd:'status' });
+  ask();
+  statusTimer = setInterval(ask, 10000);
+}
+function stopStatusPoll(){ if(statusTimer){ clearInterval(statusTimer); statusTimer = null; } }
+function handleAgentText(raw){
+  try{
+    const m = JSON.parse(raw);
+    if(m && m.cmd === 'status') setLockUi(!!m.locked);
+  }catch(e){}
+}
+function setLockUi(locked){
+  liveLocked = locked;
+  const p = $('#lockPill');
+  if(p) p.style.display = locked ? 'inline-flex' : 'none';
+  if(locked && controlOn && !lockToastShown){
+    lockToastShown = true;
+    toast('Laptop LOCKED hai - lock screen par admin input nahi jata');
+  }
+  if(!locked) lockToastShown = false;
 }
 
 /* ---- full screen / minimize ---- */
@@ -449,7 +478,8 @@ async function toggleControl(){
     if(next) startControlPing(); else stopControlPing();
     setControlUi();
     $('#liveStage').focus();
-    if(next) toast('Remote control ON - employee ka keyboard/mouse block hai');
+    if(next && liveLocked) toast('Control ON, magar laptop locked hai - pehle unlock karein');
+    else if(next) toast('Remote control ON - employee ka keyboard/mouse block hai');
   }catch(e){ toast('Control failed'); }
 }
 function setControlUi(){

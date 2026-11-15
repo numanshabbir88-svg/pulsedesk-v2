@@ -158,6 +158,12 @@ Work-profile enrolment keeps personal data and does **not** require a factory re
       hai (agent heartbeat dekhta hai) — employee permanently locked nahi rehta.
 - [ ] Ctrl+Alt+Del hamesha kaam karta hai (Windows security screen hook nahi hoti) — employee ke paas
       emergency exit rehta hai.
+- [ ] **Locked laptop**: dashboard par **LOCKED** pill dikhti hai. Windows lock screen (secure
+      desktop) par koi bhi app — PulseDesk, AnyDesk, TeamViewer — input inject nahi kar sakta;
+      unlock Windows ka security boundary hai. Employee ko unlock karna hoga.
+- [ ] Control ke doran agent display/session ko **jagta** rakhta hai (auto-sleep/auto-lock nahi hota),
+      is liye session ke beech me laptop lock nahi hoga.
+- [ ] Agar company policy allow kare to idle lock **GPO** se band kar sakte hain (neeche section 10).
 - [ ] Remote control sirf **Windows agent** par hai (Android nahi). Live screen sirf **primary**
       monitor capture karti hai — second display nahi aata (isliye pehle image "crop" lagti thi).
 
@@ -277,4 +283,41 @@ $env:JAVA_HOME = "$env:LOCALAPPDATA\msjdk17\jdk-17.0.21.0.2+1"
   signed APK, USB/adb, or MDM.
 - Keep `keystore\pulsedesk-release.jks`, its password, and `appsettings.json` out of public
   repositories.
+- **Never store employee Windows passwords** in PulseDesk and never install a credential-provider
+  "unlock" component. Windows deliberately blocks input into the lock screen; getting around it is
+  a backdoor, not a feature.
+
+### Locked laptop — what is actually possible
+
+Windows lock screen (Winlogon "secure desktop") is a separate desktop. No normal app — PulseDesk,
+AnyDesk, TeamViewer — can type into it. Only a credential provider / SYSTEM-level hook can do that,
+and that is exactly how password-stealing malware works. So:
+
+| Option | Effect | Risk |
+| --- | --- | --- |
+| Employee unlocks | Always works, zero risk | Needs the employee |
+| Keep-awake while controlling (built in) | Laptop does not auto-lock mid-session | none |
+| Machine policy: no idle lock / no sleep | Laptop stays unlocked during work hours | weaker physical security |
+| Autologon | Boot goes straight to desktop | password in plaintext registry — **not recommended** |
+| RDP with an admin account | Admin logs on over RDP instead | employee session gets disconnected |
+
+Policy route (needs local admin, apply to company-owned machines only):
+
+```powershell
+# no auto-lock after idle (Interactive logon: Machine inactivity limit = 0)
+New-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Force | Out-Null
+Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name InactivityTimeoutSecs -Value 0 -Type DWord
+
+# screensaver must not lock the screen
+Set-ItemProperty 'HKCU:\Control Panel\Desktop' -Name ScreenSaveActive -Value '0'
+Set-ItemProperty 'HKCU:\Control Panel\Desktop' -Name ScreenSaverIsSecure -Value '0'
+
+# never sleep / never blank the display while plugged in
+powercfg /change standby-timeout-ac 0
+powercfg /change monitor-timeout-ac 0
+powercfg /change hibernate-timeout-ac 0
+```
+
+Reverse the policy when the protection matters more than remote control (e.g. set
+`InactivityTimeoutSecs` back to `900` for 15 minutes).
 

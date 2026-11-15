@@ -36,6 +36,8 @@ public sealed class Collector : BackgroundService
     private volatile bool _controlOn;
     private volatile bool _inputSeen;
     private long _lastControlSeen;
+    private long _lastNudge;
+    private readonly SemaphoreSlim _wsSend = new(1, 1);
     private volatile int _liveWidth = 1600;
     private volatile int _liveQuality = 65;
     private volatile int _liveIntervalMs = 350;
@@ -76,6 +78,15 @@ public sealed class Collector : BackgroundService
                     _controlOn = false;
                     ControlBanner.Hide();
                     Settings.Log("remote control auto-released (no admin heartbeat)");
+                }
+
+                // While the admin is in control the laptop must not fall asleep or auto-lock
+                // mid-session; a harmless F15 every 45s resets the idle timer.
+                Native.KeepAwake(_controlOn);
+                if (_controlOn && Environment.TickCount64 - _lastNudge > 45_000)
+                {
+                    _lastNudge = Environment.TickCount64;
+                    RemoteInput.Nudge();
                 }
 
                 if (!_s.Paused && !_srvPaused)
@@ -223,9 +234,17 @@ public sealed class Collector : BackgroundService
             {
                 if (_streamOn && _ws is { State: System.Net.WebSockets.WebSocketState.Open })
                 {
+                    var ws = _ws;
                     var bytes = CaptureJpeg(_liveWidth, _liveQuality);
-                    if (bytes != null)
-                        await _ws.SendAsync(bytes, System.Net.WebSockets.WebSocketMessageType.Binary, true, ct);
+                    if (bytes != null && ws != null)
+                    {
+                        await _wsSend.WaitAsync(ct);
+                        try
+                        {
+                            await ws.SendAsync(bytes, System.Net.WebSockets.WebSocketMessageType.Binary, true, ct);
+                        }
+                        finally { _wsSend.Release(); }
+                    }
                     await Task.Delay(_liveIntervalMs, ct);
                 }
                 else await Task.Delay(700, ct);
@@ -302,8 +321,13 @@ public sealed class Collector : BackgroundService
                     _controlOn = true;
                     _inputSeen = false;
                     _lastControlSeen = Environment.TickCount64;
+                    _lastNudge = Environment.TickCount64;
                     ControlBanner.Show();
-                    Settings.Log("remote control ON by admin (employee input will be blocked)");
+                    RemoteInput.Nudge();   // wake a sleeping display if the session is not locked
+                    Settings.Log(Native.IsScreenLocked()
+                        ? "remote control ON by admin - device is LOCKED, input will work after unlock"
+                        : "remote control ON by admin (employee input will be blocked)");
+                    _ = SendStatus();
                     break;
                 case "control-off":
                     _controlOn = false;
@@ -312,6 +336,9 @@ public sealed class Collector : BackgroundService
                     break;
                 case "ping":
                     _lastControlSeen = Environment.TickCount64;
+                    break;
+                case "status":
+                    _ = SendStatus();
                     break;
                 case "input":
                     if (_controlOn)
@@ -328,6 +355,37 @@ public sealed class Collector : BackgroundService
             }
         }
         catch { }
+    }
+
+    /// <summary>Reports lock state to the admin console (it cannot be seen from the video alone).</summary>
+    private async Task SendStatus()
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(new
+            {
+                cmd = "status",
+                locked = Native.IsScreenLocked(),
+                control = _controlOn,
+                ts = DateTime.UtcNow.ToString("O")
+            });
+            await SendText(json);
+        }
+        catch { }
+    }
+
+    private async Task SendText(string json)
+    {
+        var ws = _ws;
+        if (ws is not { State: System.Net.WebSockets.WebSocketState.Open }) return;
+        await _wsSend.WaitAsync();
+        try
+        {
+            await ws.SendAsync(Encoding.UTF8.GetBytes(json),
+                System.Net.WebSockets.WebSocketMessageType.Text, true, CancellationToken.None);
+        }
+        catch { }
+        finally { _wsSend.Release(); }
     }
 
     /// <summary>Mouse / keyboard message coming from the admin console.</summary>

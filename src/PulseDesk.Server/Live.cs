@@ -40,6 +40,19 @@ public sealed class Live
         }
     }
 
+    /// <summary>Small text frames from the agent (lock status) forwarded to the admin viewers.</summary>
+    public async Task FanoutText(string id, string text)
+    {
+        if (!_viewers.TryGetValue(id, out var set) || set.IsEmpty) return;
+        var seg = Encoding.UTF8.GetBytes(text);
+        foreach (var ws in set.Keys)
+        {
+            if (ws.State != WebSocketState.Open) { set.TryRemove(ws, out _); continue; }
+            try { await ws.SendAsync(seg, WebSocketMessageType.Text, true, CancellationToken.None); }
+            catch { set.TryRemove(ws, out _); }
+        }
+    }
+
     public async Task NotifyAgent(string id, string json)
     {
         if (!_agents.TryGetValue(id, out var ws) || ws.State != WebSocketState.Open) return;
