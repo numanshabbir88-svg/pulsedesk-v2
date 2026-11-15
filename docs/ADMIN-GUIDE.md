@@ -141,7 +141,24 @@ Work-profile enrolment keeps personal data and does **not** require a factory re
 
 ---
 
-## 5. Verification checklist (after each enrolment)
+## 5. Live screen + remote control (Windows agent)
+
+- [ ] Dashboard → **Live screen** → device select → **Connect**.
+- [ ] Image par click = **full screen**; **Exit full screen** se wapas. **Minimize** = full screen band.
+- [ ] **Quality: Sharp / Balanced / Fast** — Sharp = 1920px @ 80%, Balanced = 1600px @ 68% (~3 fps),
+      Fast = 1280px @ 52% (slow internet / mobile data).
+- [ ] **Remote control** dabao → "Stop control" ho jata hai. Iske baad:
+      * mouse move, left/right/middle click, scroll — sab device par chalta hai
+      * keyboard: normal typing, Enter/Tab/Esc/Backspace, arrows, F1–F12, Ctrl/Alt/Shift shortcuts
+      * device par ek chhota banner dikhta hai: *"PulseDesk - remote control active (admin)"*
+- [ ] **Stop control** dabao (ya full screen se bahar aao) → input band, banner gayab, dashboard
+      **Alerts** me "remote control START/STOP" record ho jata hai.
+- [ ] Remote control sirf **Windows agent** par hai (Android nahi). Live screen sirf **primary**
+      monitor capture karti hai — second display nahi aata (isliye pehle image "crop" lagti thi).
+
+---
+
+## 6. Verification checklist (after each enrolment)
 
 | Check | Expected |
 |---|---|
@@ -155,7 +172,7 @@ Work-profile enrolment keeps personal data and does **not** require a factory re
 
 ---
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 - **"App not installed" / signature mismatch** — an older debug-signed PulseDesk is installed.
   Run `adb uninstall com.pulsedesk.mobile` (or uninstall from Settings), then reinstall.
@@ -174,7 +191,7 @@ Work-profile enrolment keeps personal data and does **not** require a factory re
 
 ---
 
-## 7. Command reference
+## 8. Command reference
 
 ```powershell
 # build the Android APK into dist\server\agent\PulseDeskMobile.apk
@@ -200,10 +217,13 @@ $env:JAVA_HOME = "$env:LOCALAPPDATA\msjdk17\jdk-17.0.21.0.2+1"
 
 ---
 
-## 8. Legal / policy notes (do not skip)
+## 9. Legal / policy notes (do not skip)
 
 - PulseDesk is **consent-based**: permanent notification, visible status, and a **Stop** action.
   Keep it that way — a hidden build gets auto-removed by Play Protect and creates legal exposure.
+- Remote control (mouse/keyboard) is opt-in per session: the device shows an always-on-top
+  banner while it is active, and every START/STOP is written to **Alerts**. Tell employees
+  in advance that admin can take control of company machines.
 - Tell employees in writing that company phones are monitored, and keep a signed acknowledgement.
 - Never bypass Play Protect / Auto Blocker with code inside the app. Use the supported routes:
   signed APK, USB/adb, or MDM.

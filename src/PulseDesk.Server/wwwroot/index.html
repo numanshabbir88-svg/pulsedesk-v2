@@ -63,8 +63,17 @@
   .toast.show{opacity:1}
   #liveWrap{position:relative;background:#04100f;border:1px solid var(--line);border-radius:12px;overflow:hidden;
     display:grid;place-items:center;padding:8px;min-height:220px}
-  #liveImg{display:none;max-width:100%;max-height:calc(100vh - 235px);width:auto;height:auto;object-fit:contain}
+  #liveStage{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+    background:#04100f;outline:none}
+  #liveImg{display:none;max-width:100%;max-height:calc(100vh - 320px);width:auto;height:auto;object-fit:contain;
+    border-radius:6px;user-select:none;-webkit-user-drag:none}
+  #liveStage.control #liveImg{cursor:crosshair;box-shadow:0 0 0 2px var(--coral)}
+  #liveStage:fullscreen{background:#000;padding:0}
+  #liveStage:fullscreen #liveImg{max-width:100vw;max-height:100vh;border-radius:0}
   #liveMsg{color:var(--muted);font-size:13px}
+  #liveStage:fullscreen #liveMsg{color:#fff}
+  #liveHint{color:var(--muted);font-size:12px;margin:10px 0 0}
+  #liveStage.control #liveHint{color:#ffb4ae}
   .tag{font-size:10.5px;padding:2px 7px;border-radius:5px;background:#123634;color:var(--muted);letter-spacing:.6px}
   .hidden{display:none!important}
 </style>
@@ -116,13 +125,24 @@
         <select id="liveDev" style="max-width:300px" onchange="startLive()"></select>
         <button class="btn sm ghost" onclick="startLive()">Connect</button>
         <button class="btn sm ghost" onclick="stopLive()">Disconnect</button>
+        <button class="btn sm ghost" id="btnFull" onclick="toggleFullscreen()">Full screen</button>
+        <button class="btn sm ghost" onclick="minimizeLive()">Minimize</button>
+        <button class="btn sm ghost" id="btnCtl" onclick="toggleControl()">Remote control</button>
+        <select id="liveQuality" style="max-width:150px" onchange="applyQuality()" title="Stream quality">
+          <option value="sharp">Quality: Sharp</option>
+          <option value="balanced" selected>Quality: Balanced</option>
+          <option value="fast">Quality: Fast</option>
+        </select>
         <span class="spacer"></span>
         <span class="pill" id="liveState"><span class="dot" style="width:6px;height:6px;border-radius:50%;background:#8faeaa"></span> idle</span>
       </div>
       <div id="liveWrap">
-        <img id="liveImg" alt="live"/>
-        <div id="liveMsg">Live view connect karein</div>
+        <div id="liveStage" tabindex="0">
+          <img id="liveImg" alt="live" draggable="false"/>
+          <div id="liveMsg">Live view connect karein</div>
+        </div>
       </div>
+      <div id="liveHint">Tip: image par click karein -> full screen. Remote control ON hone par aapka mouse/keyboard device par chalta hai.</div>
     </section>
 
     <!-- ACTIVITY -->
@@ -275,24 +295,179 @@ async function cmd(deviceId, command){
 }
 
 /* ---------------- live */
+let controlOn = false, liveDevice = '', lastMoveSent = 0;
+
+const QUALITY = {
+  sharp:    { width: 1920, q: 80, ms: 420 },
+  balanced: { width: 1600, q: 68, ms: 350 },
+  fast:     { width: 1280, q: 52, ms: 240 }
+};
+
+function liveSend(obj){
+  if(liveWs && liveWs.readyState === 1) liveWs.send(JSON.stringify(obj));
+}
+
 function startLive(){
   stopLive();
   const id = $('#liveDev').value; if(!id){ toast('No device'); return; }
+  liveDevice = id;
   const proto = location.protocol==='https:'?'wss':'ws';
   liveWs = new WebSocket(`${proto}://${location.host}/ws/admin?token=${encodeURIComponent(TOKEN)}&deviceId=${id}`);
   liveWs.binaryType='blob';
   $('#liveState').className='pill on'; $('#liveState').textContent='connecting';
-  liveWs.onopen = ()=>{ $('#liveState').className='pill on'; $('#liveState').textContent='streaming'; };
+  liveWs.onopen = ()=>{ $('#liveState').className='pill on'; $('#liveState').textContent='streaming'; applyQuality(true); };
   liveWs.onmessage = ev => {
     if(typeof ev.data === 'string') return;
     if(liveObjUrl) URL.revokeObjectURL(liveObjUrl);
     liveObjUrl = URL.createObjectURL(ev.data);
     const img=$('#liveImg'); img.src=liveObjUrl; img.style.display='block'; $('#liveMsg').style.display='none';
   };
-  liveWs.onclose = ()=>{ $('#liveState').className='pill off'; $('#liveState').textContent='disconnected'; };
+  liveWs.onclose = ()=>{
+    $('#liveState').className='pill off'; $('#liveState').textContent='disconnected';
+    if(controlOn){ controlOn=false; setControlUi(); }
+  };
   liveWs.onerror = ()=>{ $('#liveState').className='pill off'; $('#liveState').textContent='error'; };
 }
-function stopLive(){ if(liveWs){ try{liveWs.close()}catch(e){} liveWs=null; } $('#liveState').className='pill'; $('#liveState').textContent='idle'; }
+function stopLive(){
+  if(controlOn && liveWs && liveWs.readyState === 1){
+    liveWs.send(JSON.stringify({cmd:'control-off'}));
+  }
+  controlOn = false; setControlUi();
+  if(liveWs){ try{liveWs.close()}catch(e){} liveWs=null; }
+  $('#liveState').className='pill'; $('#liveState').textContent='idle';
+}
+
+function applyQuality(quiet){
+  const p = QUALITY[$('#liveQuality').value] || QUALITY.balanced;
+  liveSend({ cmd:'quality', width:p.width, q:p.q, ms:p.ms });
+  if(!quiet) toast('Stream quality: ' + $('#liveQuality').value);
+}
+
+/* ---- full screen / minimize ---- */
+function toggleFullscreen(){
+  const st = $('#liveStage');
+  if(document.fullscreenElement){ document.exitFullscreen(); return; }
+  if(st.requestFullscreen) st.requestFullscreen().catch(()=>toast('Full screen blocked by browser'));
+  else toast('Full screen not supported');
+}
+function minimizeLive(){ if(document.fullscreenElement) document.exitFullscreen(); }
+document.addEventListener('fullscreenchange', ()=>{
+  const b = $('#btnFull');
+  if(b) b.textContent = document.fullscreenElement ? 'Exit full screen' : 'Full screen';
+  if(document.fullscreenElement) $('#liveStage').focus();
+});
+
+/* ---- remote control (mouse + keyboard) ---- */
+async function toggleControl(){
+  if(!liveDevice){ toast('Connect a device first'); return; }
+  const next = !controlOn;
+  try{
+    await cmd(liveDevice, next ? 'control-on' : 'control-off');
+    controlOn = next;
+    setControlUi();
+    $('#liveStage').focus();
+  }catch(e){ toast('Control failed'); }
+}
+function setControlUi(){
+  const b = $('#btnCtl');
+  if(b){
+    b.textContent = controlOn ? 'Stop control' : 'Remote control';
+    b.className = controlOn ? 'btn sm' : 'btn sm ghost';
+  }
+  const st = $('#liveStage');
+  if(st) st.classList.toggle('control', controlOn);
+  const h = $('#liveHint');
+  if(h) h.textContent = controlOn
+    ? 'Remote control ON - aapka mouse/keyboard is device par ja raha hai. Rokne ke liye "Stop control".'
+    : 'Tip: image par click karein -> full screen. Remote control ON hone par aapka mouse/keyboard device par chalta hai.';
+}
+
+function liveNorm(e){
+  const img = $('#liveImg');
+  const r = img.getBoundingClientRect();
+  const x = Math.min(1, Math.max(0, (e.clientX - r.left) / Math.max(1, r.width)));
+  const y = Math.min(1, Math.max(0, (e.clientY - r.top) / Math.max(1, r.height)));
+  return { x:+x.toFixed(4), y:+y.toFixed(4) };
+}
+function liveButton(e){ return e.button === 2 ? 'right' : (e.button === 1 ? 'middle' : 'left'); }
+
+$('#liveImg').addEventListener('click', e => {
+  if(!liveDevice){ return; }
+  if(!controlOn && !document.fullscreenElement) toggleFullscreen();
+});
+$('#liveImg').addEventListener('dblclick', e => { e.preventDefault(); toggleFullscreen(); });
+$('#liveImg').addEventListener('mousemove', e => {
+  if(!controlOn) return;
+  const now = performance.now();
+  if(now - lastMoveSent < 60) return;
+  lastMoveSent = now;
+  const p = liveNorm(e);
+  liveSend({ cmd:'input', kind:'move', x:p.x, y:p.y });
+});
+$('#liveImg').addEventListener('mousedown', e => {
+  if(!controlOn) return;
+  e.preventDefault();
+  const p = liveNorm(e);
+  liveSend({ cmd:'input', kind:'click', button:liveButton(e), down:true, x:p.x, y:p.y });
+});
+$('#liveImg').addEventListener('mouseup', e => {
+  if(!controlOn) return;
+  e.preventDefault();
+  const p = liveNorm(e);
+  liveSend({ cmd:'input', kind:'click', button:liveButton(e), down:false, x:p.x, y:p.y });
+});
+$('#liveImg').addEventListener('contextmenu', e => { if(controlOn) e.preventDefault(); });
+$('#liveImg').addEventListener('wheel', e => {
+  if(!controlOn) return;
+  e.preventDefault();
+  liveSend({ cmd:'input', kind:'wheel', delta: e.deltaY > 0 ? -120 : 120 });
+}, { passive:false });
+
+/* keyboard: capture only while remote control is on */
+function vkFor(e){
+  const code = e.code || '';
+  if(/^Key[A-Z]$/.test(code)) return code.charCodeAt(3);
+  if(/^Digit[0-9]$/.test(code)) return 48 + (+code.slice(5));
+  if(/^F([1-9]|1[0-2])$/.test(code)) return 111 + (+code.slice(1));
+  const map = {
+    Enter:13, Escape:27, Backspace:8, Tab:9, Space:32, Delete:46, Insert:45,
+    ArrowLeft:37, ArrowUp:38, ArrowRight:39, ArrowDown:40,
+    Home:36, End:35, PageUp:33, PageDown:34,
+    ShiftLeft:16, ShiftRight:16, ControlLeft:17, ControlRight:17,
+    AltLeft:18, AltRight:18, MetaLeft:91, MetaRight:92,
+    CapsLock:20, NumLock:144, ScrollLock:145,
+    Minus:189, Equal:187, BracketLeft:219, BracketRight:221, Backslash:220,
+    Semicolon:186, Quote:222, Comma:188, Period:190, Slash:191, Backquote:192
+  };
+  return map[code] || 0;
+}
+const LIVE_NAV_KEYS = new Set(['Tab','Backspace',' ','Spacebar','ArrowUp','ArrowDown','ArrowLeft','ArrowRight',
+  'PageUp','PageDown','Home','End','Delete','Enter']);
+
+document.addEventListener('keydown', e => {
+  if(!controlOn || !liveWs || liveWs.readyState !== 1) return;
+  const vk = vkFor(e);
+  const mod = e.ctrlKey || e.altKey || e.metaKey;
+  if(vk && LIVE_NAV_KEYS.has(e.key)) e.preventDefault();
+  if(e.key && e.key.length === 1 && !mod){
+    // plain typing (unicode, layout independent)
+    liveSend({ cmd:'input', kind:'text', text:e.key });
+    if(e.key === ' ') e.preventDefault();
+    return;
+  }
+  if(!vk) return;
+  e.preventDefault();
+  liveSend({ cmd:'input', kind:'key', vk, down:true });
+}, true);
+
+document.addEventListener('keyup', e => {
+  if(!controlOn || !liveWs || liveWs.readyState !== 1) return;
+  const mod = e.ctrlKey || e.altKey || e.metaKey;
+  if(e.key && e.key.length === 1 && !mod) return;   // typed as text, no keyup needed
+  const vk = vkFor(e); if(!vk) return;
+  e.preventDefault();
+  liveSend({ cmd:'input', kind:'key', vk, down:false });
+}, true);
 
 /* ---------------- activity */
 async function loadActivity(){

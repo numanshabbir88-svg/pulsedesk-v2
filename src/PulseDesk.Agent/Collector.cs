@@ -31,6 +31,13 @@ public sealed class Collector : BackgroundService
     private volatile bool _srvPaused;
     private readonly object _sync = new();
 
+    // remote control (Windows only): mouse + keyboard are accepted only while the admin
+    // has switched it on for this device.
+    private volatile bool _controlOn;
+    private volatile int _liveWidth = 1600;
+    private volatile int _liveQuality = 65;
+    private volatile int _liveIntervalMs = 350;
+
     public Collector(Settings s)
     {
         _s = s;
@@ -77,7 +84,7 @@ public sealed class Collector : BackgroundService
                     }
 
                     if ((DateTime.UtcNow - _lastShot).TotalSeconds >= Math.Max(5, _s.ScreenshotIntervalSec))
-                        await CaptureAndUpload(1280, 70);
+                        await CaptureAndUpload(1600, 78);
 
                     if ((DateTime.UtcNow - lastHb).TotalSeconds >= 30)
                     {
@@ -150,7 +157,10 @@ public sealed class Collector : BackgroundService
 
     private static byte[]? CaptureJpeg(int maxWidth, long quality)
     {
-        var b = SystemInformation.VirtualScreen;
+        // Capture the PRIMARY screen only. VirtualScreen merges every monitor into one very
+        // wide bitmap, which is why the admin preview looked cropped / squeezed on laptops
+        // with a second display.
+        var b = PrimaryScreenBounds();
         if (b.Width <= 0 || b.Height <= 0) return null;
         using var bmp = new Bitmap(b.Width, b.Height, PixelFormat.Format24bppRgb);
         using (var g = Graphics.FromImage(bmp))
@@ -162,10 +172,13 @@ public sealed class Collector : BackgroundService
         Bitmap? scaled = null;
         if (b.Width > maxWidth)
         {
-            int w = maxWidth, h = (int)(b.Height * (maxWidth / (double)b.Width));
+            int w = maxWidth, h = (int)Math.Round(b.Height * (maxWidth / (double)b.Width));
             scaled = new Bitmap(w, h);
             using var g2 = Graphics.FromImage(scaled);
-            g2.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
+            g2.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+            g2.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighQuality;
+            g2.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+            g2.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
             g2.DrawImage(bmp, 0, 0, w, h);
             target = scaled;
         }
@@ -179,6 +192,18 @@ public sealed class Collector : BackgroundService
         return ms.ToArray();
     }
 
+    private static Rectangle PrimaryScreenBounds()
+    {
+        try
+        {
+            var b = Screen.PrimaryScreen?.Bounds ?? Rectangle.Empty;
+            if (b.Width > 0 && b.Height > 0) return b;
+        }
+        catch { }
+        var v = SystemInformation.VirtualScreen;
+        return v.Width > 0 ? v : new Rectangle(0, 0, 1920, 1080);
+    }
+
     private async Task LiveLoop(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -187,10 +212,10 @@ public sealed class Collector : BackgroundService
             {
                 if (_streamOn && _ws is { State: System.Net.WebSockets.WebSocketState.Open })
                 {
-                    var bytes = CaptureJpeg(1280, 45);
+                    var bytes = CaptureJpeg(_liveWidth, _liveQuality);
                     if (bytes != null)
                         await _ws.SendAsync(bytes, System.Net.WebSockets.WebSocketMessageType.Binary, true, ct);
-                    await Task.Delay(900, ct);
+                    await Task.Delay(_liveIntervalMs, ct);
                 }
                 else await Task.Delay(700, ct);
             }
@@ -248,10 +273,72 @@ public sealed class Collector : BackgroundService
                     Settings.Log("resumed by admin");
                     break;
                 case "shot-now":
-                    _ = CaptureAndUpload(1600, 75);
+                    _ = CaptureAndUpload(1600, 78);
+                    break;
+
+                // ---- live quality (admin can pick Sharp / Balanced / Fast)
+                case "quality":
+                    if (j.TryGetProperty("width", out var w) && w.TryGetInt32(out var wv))
+                        _liveWidth = Math.Clamp(wv, 480, 2560);
+                    if (j.TryGetProperty("q", out var q) && q.TryGetInt32(out var qv))
+                        _liveQuality = Math.Clamp(qv, 20, 90);
+                    if (j.TryGetProperty("ms", out var m) && m.TryGetInt32(out var mv))
+                        _liveIntervalMs = Math.Clamp(mv, 120, 2000);
+                    break;
+
+                // ---- remote control (mouse + keyboard) ----
+                case "control-on":
+                    _controlOn = true;
+                    ControlBanner.Show();
+                    Settings.Log("remote control ON by admin");
+                    break;
+                case "control-off":
+                    _controlOn = false;
+                    ControlBanner.Hide();
+                    Settings.Log("remote control OFF by admin");
+                    break;
+                case "input":
+                    if (_controlOn) HandleInput(j);
                     break;
             }
         }
         catch { }
     }
+
+    /// <summary>Mouse / keyboard message coming from the admin console.</summary>
+    private static void HandleInput(JsonElement j)
+    {
+        var kind = j.TryGetProperty("kind", out var k) ? k.GetString() ?? "" : "";
+        switch (kind)
+        {
+            case "move":
+                RemoteInput.Move(Num(j, "x"), Num(j, "y"));
+                break;
+            case "click":
+            {
+                var button = j.TryGetProperty("button", out var bt) ? bt.GetString() ?? "left" : "left";
+                var down = j.TryGetProperty("down", out var d) && d.ValueKind == JsonValueKind.True;
+                RemoteInput.Move(Num(j, "x"), Num(j, "y"));
+                RemoteInput.Button(button, down);
+                break;
+            }
+            case "wheel":
+                var delta = j.TryGetProperty("delta", out var de) && de.TryGetInt32(out var dv) ? dv : 0;
+                RemoteInput.Wheel(delta);
+                break;
+            case "key":
+            {
+                var vk = j.TryGetProperty("vk", out var v) && v.TryGetInt32(out var vv) ? vv : 0;
+                var down = j.TryGetProperty("down", out var d2) && d2.ValueKind == JsonValueKind.True;
+                RemoteInput.Key(vk, down);
+                break;
+            }
+            case "text":
+                RemoteInput.Text(j.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "");
+                break;
+        }
+    }
+
+    private static double Num(JsonElement j, string name) =>
+        j.TryGetProperty(name, out var v) && v.TryGetDouble(out var d) ? d : 0;
 }

@@ -579,6 +579,9 @@ app.MapPost("/api/admin/command", async (HttpRequest req) =>
     }
     if (command == "shot-now")
         db.Alert(deviceId, "control", "Admin ne instant screenshot liya", "info");
+    if (command is "control-on" or "control-off")
+        db.Alert(deviceId, "control",
+            "Admin ne remote control " + (command == "control-on" ? "START" : "STOP") + " kiya", "warn");
 
     var q = conn.CreateCommand();
     q.CommandText = "INSERT INTO commands(device_id,command,created_at) VALUES($d,$c,$t)";
@@ -716,6 +719,11 @@ app.Map("/ws/admin", async (HttpContext ctx) =>
         {
             var res = await ws.ReceiveAsync(buf, CancellationToken.None);
             if (res.MessageType == WebSocketMessageType.Close) break;
+
+            // Everything the admin console sends (live quality, remote mouse/keyboard) is
+            // forwarded as-is to this device's agent socket.
+            if (res.MessageType == WebSocketMessageType.Text)
+                await live.NotifyAgent(deviceId, Encoding.UTF8.GetString(buf, 0, res.Count));
         }
     }
     catch { }
