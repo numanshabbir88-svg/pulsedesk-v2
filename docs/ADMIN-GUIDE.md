@@ -81,6 +81,32 @@ different signatures). Fresh phones are not affected.
 > The invite code is claimed automatically — the employee never types a code, and a reinstall
 > keeps the same device identity.
 
+### 2c. Windows laptop — branded install + employee home window
+
+No more consent checkboxes or "monitoring is on" pop-ups. The flow is one download, one UAC
+prompt, one red button.
+
+- [ ] Send the same invite link (or copy the downloaded `PulseDeskSetup.exe` to the laptop).
+- [ ] On the laptop: **Download & Install** → open the downloaded file → UAC **Yes**. That is
+      the only prompt; no other dialog appears.
+- [ ] The branded **PulseDesk** window opens automatically:
+      *"Thanks for connecting with us"*, a short status line and the red **Allow** button.
+- [ ] The employee presses **Allow** (this is the consent record, stored with date + time).
+      Devices shows the laptop **online** within ~30 seconds. **Nothing is collected before
+      that press** — the agent is installed but paused.
+- [ ] A **PulseDesk** icon is placed on the Desktop and in the Start Menu. Opening it shows the
+      same window with the current state: **Connected** or **Paused by your admin**.
+- [ ] **Not now** leaves PulseDesk installed but idle; the employee can press **Allow** later
+      from that icon. The dashboard does not list the device until then.
+
+Admin notes:
+
+- If the laptop is enrolled by IT with an admin account, the window still appears on the
+  employee's desktop — ask the employee to press **Allow** themselves.
+- Re-running the setup on an installed laptop just opens the same window (use `--install` only
+  for a forced repair).
+- The icon, the state window and the shortcut are removed automatically by the uninstaller.
+
 ---
 
 ## 3. Add a phone over USB / adb (zero prompts, best for 20 phones)
@@ -289,6 +315,9 @@ $env:JAVA_HOME = "$env:LOCALAPPDATA\msjdk17\jdk-17.0.21.0.2+1"
 
 - PulseDesk is **consent-based**: permanent notification, visible status, and a **Stop** action.
   Keep it that way — a hidden build gets auto-removed by Play Protect and creates legal exposure.
+- On Windows the employee's consent is the red **Allow** press in the PulseDesk window: nothing is
+  uploaded before it, and the timestamp is stored on the server (`consent_at`). Do not install and
+  press Allow for the employee.
 - Remote control (mouse/keyboard) is opt-in per session: the device shows an always-on-top
   banner while it is active, and every START/STOP is written to **Alerts**. Tell employees
   in advance that admin can take control of company machines.
@@ -357,8 +386,8 @@ nahi aata. Full removal baad me IT kar sakta hai (ya admin user `Remove-PulseDes
 **Admin/IT route (recommended):**
 
 Removed automatically: agent processes, logon auto-start entry (HKCU + enrolled user's HKU),
-legacy service, Programs-and-Features entry, `C:\ProgramData\PulseDesk` (config + `agent.log`),
-and `C:\Program Files\PulseDesk`.
+legacy service, Programs-and-Features entry, the Desktop and Start Menu **PulseDesk** icons,
+`C:\ProgramData\PulseDesk` (config + `agent.log`), and `C:\Program Files\PulseDesk`.
 
 Leftover check (elevated, only if something survived):
 

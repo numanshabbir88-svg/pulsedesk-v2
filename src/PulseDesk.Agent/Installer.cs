@@ -41,7 +41,8 @@ public static class Installer
         catch (Exception ex) { Log("repair startup failed: " + ex.Message); }
     }
 
-    public static int Run()    {
+    public static int Run()
+    {
         var conf = EmbeddedConfig.Read();
         if (conf == null || string.IsNullOrWhiteSpace(conf.code))
         {
@@ -52,24 +53,7 @@ public static class Installer
             return 2;
         }
 
-        var consent = MessageBox.Show(
-            "PulseDesk v.2 - Company Monitoring Agent\n\n" +
-            "Is computer par company monitoring install hone wali hai.\n\n" +
-            "Record hone wali cheezein:\n" +
-            "  - Screen (periodic screenshots + live view jab admin dekhe)\n" +
-            "  - Running apps aur window titles\n" +
-            "  - Active / idle time\n\n" +
-            "Record NAHI hoti:\n" +
-            "  - Keystrokes (raw typing)\n" +
-            "  - Files, passwords, personal messages\n\n" +
-            "Data company policy ke tehat admin ke server par store hoti hai.\n" +
-            "Install karne ke liye OK dabaein (ye aap ka consent hai).",
-            "PulseDesk v.2 - Consent", MessageBoxButtons.OKCancel, MessageBoxIcon.Information,
-            MessageBoxDefaultButton.Button2);
-
-        if (consent != DialogResult.OK) return 1;
-
-        using var progress = ProgressForm.Show("PulseDesk v.2 installing...");
+        using var progress = ProgressForm.Show("PulseDesk installing...");
         var step = "start";
         void Step(string name, Action action)
         {
@@ -81,72 +65,61 @@ public static class Installer
 
         try
         {
-            Step("Enrolling device", () =>
+            Step("Installing files", () =>
             {
-                var enrolled = Enroll(conf).GetAwaiter().GetResult();
-                if (enrolled == null)
-                    throw new InvalidOperationException(
-                        "Enrollment fail hua (server ne invite accept nahi kiya). Internet check karein ya admin se naya link lein.");
-
-                Step("Installing files", () =>
+                Directory.CreateDirectory(InstallDir);
+                var self = Environment.ProcessPath!;
+                foreach (var p in Process.GetProcessesByName("PulseDesk.Agent"))
+                    if (p.Id != Environment.ProcessId) { try { p.Kill(); } catch { } }
+                if (!string.Equals(self, TargetExe, StringComparison.OrdinalIgnoreCase))
                 {
-                    Directory.CreateDirectory(InstallDir);
-                    var self = Environment.ProcessPath!;
-                    foreach (var p in Process.GetProcessesByName("PulseDesk.Agent"))
-                        if (p.Id != Environment.ProcessId) { try { p.Kill(); } catch { } }
-                    if (!string.Equals(self, TargetExe, StringComparison.OrdinalIgnoreCase))
+                    for (int i = 0; i < 20; i++)
                     {
-                        for (int i = 0; i < 20; i++)
-                        {
-                            try { File.Copy(self, TargetExe, true); break; }
-                            catch (IOException) { Thread.Sleep(400); }
-                        }
+                        try { File.Copy(self, TargetExe, true); break; }
+                        catch (IOException) { Thread.Sleep(400); }
                     }
-                    Log("files installed -> " + TargetExe);
-
-                    Step("Writing configuration", () =>
-                    {
-                        var s = new Settings
-                        {
-                            Server = conf.server,
-                            DeviceToken = enrolled.Value.token,
-                            DeviceId = enrolled.Value.id,
-                            ConsentAt = DateTime.UtcNow.ToString("O"),
-                            ScreenshotIntervalSec = 600,
-                            Paused = false
-                        };
-                        s.Save();
-                        Log("settings saved -> " + Settings.FilePath);
-                        GrantUsersModify(Settings.Dir);
-
-                        Step("Setting up auto-start", () =>
-                        {
-                            RegisterStartup();
-                            Sc("stop " + ServiceName);     // remove old service install if any
-                            Sc("delete " + ServiceName);
-
-                            Step("Starting agent", () =>
-                            {
-                                StartAgent();
-
-                                Step("Finalising", () =>
-                                {
-                                    WriteUninstallEntry();
-                                });
-                            });
-                        });
-                    });
-                });
+                }
+                Log("files installed -> " + TargetExe);
             });
+
+            Step("Writing configuration", () =>
+            {
+                var s = Settings.Load();
+                s.Server = conf.server;
+                if (string.IsNullOrWhiteSpace(s.DeviceToken))
+                {
+                    // Not enrolled yet: the agent stays idle until the employee presses
+                    // "Allow monitoring" in the PulseDesk window (that is the consent).
+                    s.DeviceToken = "";
+                    s.DeviceId = "";
+                    s.ConsentAt = "";
+                    s.Paused = true;
+                }
+                if (s.ScreenshotIntervalSec <= 0) s.ScreenshotIntervalSec = 600;
+                s.Save();
+                Log("settings saved -> " + Settings.FilePath);
+                GrantUsersModify(Settings.Dir);
+            });
+
+            Step("Setting up auto-start", () =>
+            {
+                RegisterStartup();
+                Sc("stop " + ServiceName);     // remove old service install if any
+                Sc("delete " + ServiceName);
+            });
+
+            Step("Adding desktop icon", CreateShortcuts);
+            Step("Registering with Windows", WriteUninstallEntry);
 
             progress.Close();
             Log("install complete");
-            MessageBox.Show(
-                "PulseDesk v.2 install ho gaya.\n\n" +
-                "Monitoring chalu hai. Ye background mein chalta hai - koi window nahi khulti.\n" +
-                "Windows Settings -> Apps mein 'PulseDesk v.2 Monitoring Agent' dikhega (wahan se uninstall).\n\n" +
-                "Koi setting nahi karni - admin apni console se sab control karta hai.",
-                "PulseDesk v.2", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+            // Re-install over an already consented agent (repair case): start it again.
+            var settings = Settings.Load();
+            if (!string.IsNullOrWhiteSpace(settings.DeviceToken)) StartAgent();
+
+            // First run: the branded window asks for consent. Later runs show the status.
+            EmployeeHome.ShowHome();
             return 0;
         }
         catch (Exception ex)
@@ -161,7 +134,48 @@ public static class Installer
         }
     }
 
-    private static async Task<(string id, string token)?> Enroll(EmbeddedConfig.Conf conf)
+    /// <summary>
+    /// Consent action from the employee home window: enroll (first time), record the consent
+    /// timestamp, unpause and start collecting. Returns null on success, or a message to show.
+    /// </summary>
+    public static string? GiveConsent()
+    {
+        try
+        {
+            var s = Settings.Load();
+
+            if (string.IsNullOrWhiteSpace(s.DeviceToken))
+            {
+                var conf = EmbeddedConfig.Read();
+                if (conf == null || string.IsNullOrWhiteSpace(conf.code))
+                    return "Setup information is missing. Download PulseDesk again from the link your admin sent.";
+
+                var consentAt = DateTime.UtcNow.ToString("O");
+                var enrolled = Enroll(conf, consentAt).GetAwaiter().GetResult();
+                if (enrolled == null)
+                    return "Could not reach the PulseDesk server. Check your internet connection and press Allow again.";
+
+                s.Server = conf.server;
+                s.DeviceToken = enrolled.Value.token;
+                s.DeviceId = enrolled.Value.id;
+                Log("enrolled at consent -> " + enrolled.Value.id);
+            }
+
+            s.ConsentAt = DateTime.UtcNow.ToString("O");
+            s.Paused = false;
+            s.Save();
+            Log("employee consent given - monitoring started");
+            StartAgent();
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Log("consent failed: " + ex);
+            return "Could not save the consent on this computer. Ask your admin to run PulseDesk as administrator once.";
+        }
+    }
+
+    private static async Task<(string id, string token)?> Enroll(EmbeddedConfig.Conf conf, string consentAt)
     {
         using var http = HttpFactory.Create(TimeSpan.FromSeconds(30));
         var body = new
@@ -171,7 +185,7 @@ public static class Installer
             user = Environment.UserName,
             os = Environment.OSVersion.VersionString,
             agentVersion = typeof(Installer).Assembly.GetName().Version?.ToString() ?? "1.0.0",
-            consentAt = DateTime.UtcNow.ToString("O")
+            consentAt
         };
         var r = await http.PostAsJsonAsync(conf.server.TrimEnd('/') + "/api/enroll", body);
         var text = await r.Content.ReadAsStringAsync();
@@ -361,6 +375,7 @@ public static class Installer
     {
         try
         {
+            if (CollectorRunning()) return;
             Process.Start(new ProcessStartInfo(TargetExe, "--run")
             {
                 UseShellExecute = false,
@@ -369,6 +384,90 @@ public static class Installer
             });
         }
         catch (Exception ex) { Settings.Log("start agent failed: " + ex.Message); }
+    }
+
+    /// <summary>Start the collector only if it is not already running.</summary>
+    internal static void EnsureAgent()
+    {
+        try { if (!CollectorRunning()) StartAgent(); } catch { }
+    }
+
+    /// <summary>True when a collector is already running in this user session.</summary>
+    internal static bool CollectorRunning()
+    {
+        try
+        {
+            using var m = Mutex.OpenExisting(@"Local\PulseDeskAgent");
+            return true;
+        }
+        catch { return false; }
+    }
+
+    internal static bool IsElevated
+    {
+        get
+        {
+            try
+            {
+                using var id = WindowsIdentity.GetCurrent();
+                return new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
+            }
+            catch { return false; }
+        }
+    }
+
+    /// <summary>Desktop + Start Menu "PulseDesk" icons that open the employee home window.</summary>
+    private static void CreateShortcuts()
+    {
+        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
+        if (string.IsNullOrWhiteSpace(desktop))
+            desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        CreateShortcut(Path.Combine(desktop, "PulseDesk.lnk"));
+
+        var programs = Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms);
+        if (string.IsNullOrWhiteSpace(programs))
+            programs = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
+        CreateShortcut(Path.Combine(programs, "PulseDesk.lnk"));
+    }
+
+    private static void CreateShortcut(string path)
+    {
+        try
+        {
+            var shellType = Type.GetTypeFromProgID("WScript.Shell");
+            if (shellType == null) { Log("shortcut: WScript.Shell not available"); return; }
+            dynamic shell = Activator.CreateInstance(shellType)!;
+            dynamic lnk = shell.CreateShortcut(path);
+            lnk.TargetPath = TargetExe;
+            lnk.Arguments = "--home";
+            lnk.WorkingDirectory = InstallDir;
+            lnk.IconLocation = TargetExe + ",0";
+            lnk.Description = "PulseDesk - monitoring status and privacy";
+            lnk.WindowStyle = 1;
+            lnk.Save();
+            Log("shortcut -> " + path);
+        }
+        catch (Exception ex) { Log("shortcut failed " + path + ": " + ex.Message); }
+    }
+
+    private static void RemoveShortcuts()
+    {
+        foreach (var folder in new[]
+                 {
+                     Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory),
+                     Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+                     Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms),
+                     Environment.GetFolderPath(Environment.SpecialFolder.Programs)
+                 })
+        {
+            if (string.IsNullOrWhiteSpace(folder)) continue;
+            try
+            {
+                var lnk = Path.Combine(folder, "PulseDesk.lnk");
+                if (File.Exists(lnk)) File.Delete(lnk);
+            }
+            catch { }
+        }
     }
 
     /// <summary>Agent stores its config in ProgramData - standard users must be able to write there.</summary>
@@ -414,6 +513,7 @@ public static class Installer
             key.SetValue("DisplayName", "PulseDesk v.2 Monitoring Agent");
             key.SetValue("Publisher", "PulseDesk");
             key.SetValue("DisplayVersion", "1.0.0");
+            key.SetValue("DisplayIcon", TargetExe);
             key.SetValue("InstallLocation", InstallDir);
             key.SetValue("UninstallString", $"\"{TargetExe}\" --uninstall");
             key.SetValue("NoModify", 1, Microsoft.Win32.RegistryValueKind.DWord);
@@ -454,6 +554,7 @@ public static class Installer
 
         Sc("stop " + ServiceName);
         Sc("delete " + ServiceName);
+        RemoveShortcuts();
 
         try
         {

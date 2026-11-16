@@ -42,6 +42,12 @@ Remove-Item 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PulseDesk
 sc.exe stop PulseDeskAgent | Out-Null
 sc.exe delete PulseDeskAgent | Out-Null
 
+# 3b. desktop + Start Menu icons
+foreach ($f in @('CommonDesktopDirectory','DesktopDirectory','CommonPrograms','Programs')) {
+    $dir = [Environment]::GetFolderPath($f)
+    if ($dir) { Remove-Item (Join-Path $dir 'PulseDesk.lnk') -Force -ErrorAction SilentlyContinue }
+}
+
 # 4. files: install folder + ProgramData (agent.json, agent.log)
 Remove-Item "$env:ProgramFiles\PulseDesk" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item "$env:ProgramData\PulseDesk" -Recurse -Force -ErrorAction SilentlyContinue

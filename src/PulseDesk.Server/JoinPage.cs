@@ -26,7 +26,7 @@ public static class JoinPage
      <li><span class='num'>1</span><span>Click the button below to download the setup file.</span></li>
      <li><span class='num'>2</span><span>Run the downloaded file.</span></li>
      <li><span class='num'>3</span><span>Approve the Windows prompt once (<b>Yes</b>).</span></li>
-     <li><span class='num'>4</span><span>Tick the consent box and click <b>Install</b> &mdash; that is all.</span></li>
+     <li><span class='num'>4</span><span>The PulseDesk window opens &mdash; press the red <b>Allow</b> button.</span></li>
    </ol>";
 
         var action = mobile

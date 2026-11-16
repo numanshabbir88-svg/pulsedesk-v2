@@ -11,8 +11,15 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        // PerMonitorV2 for every GUI mode (home window included). Without it Windows
+        // bitmap-stretches the process on 125%/150% scaled laptops, so the window - and the
+        // screen capture / mouse mapping - becomes blurry. Must run before any handle.
+        try { Application.SetHighDpiMode(HighDpiMode.PerMonitorV2); } catch { }
+
         var mode = args.Length > 0 ? args[0].ToLowerInvariant() : "";
-        var self = Environment.ProcessPath!;
+
+        // ---- employee home window (desktop / Start Menu icon)
+        if (mode == "--home") return EmployeeHome.ShowHome();
 
         // ---- explicit install / uninstall (both need admin)
         if (mode is "--install" or "--uninstall")
@@ -26,11 +33,11 @@ internal static class Program
 
         // ---- no arguments: two cases
         //   a) freshly downloaded setup with an embedded invite  -> install
-        //   b) already installed exe                              -> collect
+        //   b) already installed exe / setup on an installed PC  -> home window
         var settings = Settings.Load();
-        var installed = !string.IsNullOrWhiteSpace(settings.DeviceToken) && File.Exists(Settings.FilePath);
+        var hasInstall = File.Exists(Settings.FilePath) && !string.IsNullOrWhiteSpace(settings.Server);
 
-        if (!installed)
+        if (!hasInstall)
         {
             var conf = EmbeddedConfig.Read();
             if (conf == null || string.IsNullOrWhiteSpace(conf.code))
@@ -45,19 +52,15 @@ internal static class Program
             return Installer.Run();
         }
 
-        // Already installed: repair the logon auto-start entry (covers re-running the setup
-        // on a machine where the entry was lost) and keep the agent running.
+        // Installed: repair the logon auto-start entry (covers re-running the setup on a
+        // machine where the entry was lost) and open the branded status / consent window.
         Installer.RepairStartup();
-        return RunCollector(args);
+        return EmployeeHome.ShowHome();
     }
 
     private static int RunCollector(string[] args)
     {
-        // PerMonitorV2: without it Windows bitmap-stretches the process on 125%/150% scaled
-        // laptops, so the screen capture (and the mouse mapping) becomes blurry. Must run
-        // before any window/handle is created.
-        try { Application.SetHighDpiMode(HighDpiMode.PerMonitorV2); } catch { }
-
+        // DPI mode is set once at the top of Main (before any window exists).
         // One agent per user session - avoids double samples when both startup + manual run happen.
         using var mutex = new Mutex(true, @"Local\PulseDeskAgent", out var fresh);
         if (!fresh) return 0;
