@@ -250,6 +250,10 @@ Mahdoodiyat (mobile par):
   5. Laptop sleep / lock screen par ho to pehle unlock karo — lock screen par input nahi jata.
 - **Employee ka input band nahi ho raha** — agent purana hai (upar point 1). Naya agent low-level
   hooks se local input swallow karta hai; koi setting enable karne ki zaroorat nahi.
+- **`AGENT OLD` pill / remote control bilkul effect nahi karta** — installed exe purana hai. Laptop
+  par (admin PowerShell) `scripts\update-agent.ps1` chalao, ya naya setup dobara chalao. Agent
+  restart ke baghair purana code memory me hi chalta rehta hai; server deploy khud update nahi karta.
+  Verify: `C:\ProgramData\PulseDesk\agent.log` me `input lock: ON` aur `remote input received from admin`.
 - **Remote control khud band ho gaya** — safety feature: admin tab band / network drop par
   45 second me auto-release. Dobara **Remote control** dabao.
 
@@ -339,13 +343,18 @@ Order: revoke the device first (so the token dies), then remove the agent, then 
 
 ### 11.1 Employee laptop (Windows agent)
 
-```powershell
-# easiest: Settings > Apps > Installed apps > PulseDesk > Uninstall  (UAC = Yes)
-# or, elevated PowerShell:
-& "$env:ProgramFiles\PulseDesk\PulseDesk.Agent.exe" --uninstall
-# or from a freshly downloaded setup:
-& "$env:USERPROFILE\Downloads\PulseDeskSetup.exe" --uninstall
-```
+**Employee ke paas admin nahi hai?** Do ready-made files `scripts\employee\` me hain — us laptop par
+copy karke double-click karo:
+
+| File | Kya karta hai | Admin chahiye? |
+| --- | --- | --- |
+| `Remove-PulseDesk.cmd` | poora uninstall (agent + autostart + files) | haan (UAC) |
+| `Stop-PulseDesk.cmd` | monitoring foran band + us user ka autostart hata deta hai (files rehti hain) | **nahi** |
+
+`Stop-PulseDesk.cmd` ke baad laptop dashboard par offline ho jata hai aur next logon par agent wapis
+nahi aata. Full removal baad me IT kar sakta hai (ya admin user `Remove-PulseDesk.cmd` chala de).
+
+**Admin/IT route (recommended):**
 
 Removed automatically: agent processes, logon auto-start entry (HKCU + enrolled user's HKU),
 legacy service, Programs-and-Features entry, `C:\ProgramData\PulseDesk` (config + `agent.log`),

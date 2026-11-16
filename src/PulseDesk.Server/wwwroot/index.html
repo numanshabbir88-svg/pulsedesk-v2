@@ -201,6 +201,7 @@
         <span class="spacer"></span>
         <span class="pill" id="liveState"><span class="dot" style="width:6px;height:6px;border-radius:50%;background:#8faeaa"></span> idle</span>
         <span class="pill off" id="lockPill" style="display:none" title="Windows lock screen active">LOCKED</span>
+        <span class="pill off" id="agentPill" style="display:none" title="Purana agent - naya build install karein (scripts\update-agent.ps1)">AGENT OLD</span>
       </div>
       <div id="liveWrap">
         <div id="liveStage" tabindex="0">
@@ -381,7 +382,7 @@ async function cmd(deviceId, command){
 
 /* ---------------- live */
 let controlOn = false, liveDevice = '', lastMoveSent = 0;
-let statusTimer = null, liveLocked = false, lockToastShown = false;
+let statusTimer = null, statusProbe = null, statusSeen = false, liveLocked = false, lockToastShown = false;
 
 const QUALITY = {
   hd:       { width: 1920, q: 84, ms: 400 },
@@ -451,15 +452,30 @@ function applyQuality(quiet){
 /* ---- lock state (reported by the agent; cannot be seen from the video) ---- */
 function startStatusPoll(){
   stopStatusPoll();
+  statusSeen = false;
   const ask = () => liveSend({ cmd:'status' });
   ask();
   statusTimer = setInterval(ask, 10000);
+  // Old agents (installed before remote control existed) never answer "status".
+  statusProbe = setTimeout(()=>{
+    if(statusSeen) return;
+    const p = $('#agentPill');
+    if(p){ p.style.display = 'inline-flex'; p.textContent = 'AGENT OLD'; }
+  }, 8000);
 }
-function stopStatusPoll(){ if(statusTimer){ clearInterval(statusTimer); statusTimer = null; } }
+function stopStatusPoll(){
+  if(statusTimer){ clearInterval(statusTimer); statusTimer = null; }
+  if(statusProbe){ clearTimeout(statusProbe); statusProbe = null; }
+  const p = $('#agentPill'); if(p) p.style.display = 'none';
+}
 function handleAgentText(raw){
   try{
     const m = JSON.parse(raw);
-    if(m && m.cmd === 'status') setLockUi(!!m.locked);
+    if(m && m.cmd === 'status'){
+      statusSeen = true;
+      const p = $('#agentPill'); if(p) p.style.display = 'none';
+      setLockUi(!!m.locked);
+    }
   }catch(e){}
 }
 function setLockUi(locked){
@@ -506,7 +522,10 @@ async function toggleControl(){
     if(next) startControlPing(); else stopControlPing();
     setControlUi();
     $('#liveStage').focus();
-    if(next && liveLocked) toast('Control ON, magar laptop locked hai - pehle unlock karein');
+    if(next && !statusSeen){
+      toast('Agent purana hai (AGENT OLD) - remote control nahi chalega. Laptop par scripts\\update-agent.ps1 chalayein.');
+    }
+    else if(next && liveLocked) toast('Control ON, magar laptop locked hai - pehle unlock karein');
     else if(next) toast('Remote control ON - employee ka keyboard/mouse block hai');
   }catch(e){ toast('Control failed'); }
 }
