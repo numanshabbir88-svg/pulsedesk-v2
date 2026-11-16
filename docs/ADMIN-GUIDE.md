@@ -331,3 +331,78 @@ powercfg /change hibernate-timeout-ac 0
 Reverse the policy when the protection matters more than remote control (e.g. set
 `InactivityTimeoutSecs` back to `900` for 15 minutes).
 
+---
+
+## 11. Uninstall / remove PulseDesk completely
+
+Order: revoke the device first (so the token dies), then remove the agent, then the server.
+
+### 11.1 Employee laptop (Windows agent)
+
+```powershell
+# easiest: Settings > Apps > Installed apps > PulseDesk > Uninstall  (UAC = Yes)
+# or, elevated PowerShell:
+& "$env:ProgramFiles\PulseDesk\PulseDesk.Agent.exe" --uninstall
+# or from a freshly downloaded setup:
+& "$env:USERPROFILE\Downloads\PulseDeskSetup.exe" --uninstall
+```
+
+Removed automatically: agent processes, logon auto-start entry (HKCU + enrolled user's HKU),
+legacy service, Programs-and-Features entry, `C:\ProgramData\PulseDesk` (config + `agent.log`),
+and `C:\Program Files\PulseDesk`.
+
+Leftover check (elevated, only if something survived):
+
+```powershell
+Get-Process PulseDesk.Agent -ErrorAction SilentlyContinue | Stop-Process -Force
+Remove-Item "$env:ProgramFiles\PulseDesk" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item "$env:ProgramData\PulseDesk" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name PulseDesk -ErrorAction SilentlyContinue
+Get-ScheduledTask | Where-Object TaskName -like '*PulseDesk*'   # should print nothing
+```
+
+### 11.2 Revoke the device on the server (recommended first)
+
+```powershell
+$tok = (Invoke-RestMethod -Method Post 'http://localhost:5080/api/admin/login' `
+        -Body (@{ password = '<AdminPassword>' } | ConvertTo-Json) `
+        -ContentType 'application/json').token
+Invoke-RestMethod 'http://localhost:5080/api/admin/devices' -Headers @{ 'X-Admin-Token' = $tok }
+Invoke-RestMethod -Method Delete 'http://localhost:5080/api/admin/device/<deviceId>' `
+        -Headers @{ 'X-Admin-Token' = $tok }   # deletes that device's activity, shots, alerts, commands
+```
+
+### 11.3 Android agent
+
+```powershell
+adb uninstall com.pulsedesk.mobile
+# or: Settings > Apps > PulseDesk > Uninstall
+```
+
+PWA icon (phone home screen): long-press the icon > **Remove** / **Uninstall**, then in the
+browser site settings clear data for the PulseDesk URL.
+
+### 11.4 Server PC (admin side)
+
+```powershell
+# elevated
+schtasks /end /tn "PulseDesk Watchdog"
+Unregister-ScheduledTask -TaskName "PulseDesk Watchdog" -Confirm:$false
+Stop-Process -Name PulseDesk.Server -Force -ErrorAction SilentlyContinue
+
+# public URL (optional - only if Tailscale is not used for anything else)
+tailscale funnel reset
+```
+
+Then delete the server folder. **All monitoring history lives in `dist\server\data`
+(database + screenshots)** — deleting it is permanent:
+
+```powershell
+Remove-Item '<repo>\dist\server' -Recurse -Force
+Remove-Item '<repo>\dist\logs' -Recurse -Force
+```
+
+Keep `keystore\pulsedesk-release.jks` + its password somewhere safe if you might rebuild the
+Android app later. Uninstall leaves no hidden driver, hook or service behind — the input lock is
+only active while the agent runs.
+
