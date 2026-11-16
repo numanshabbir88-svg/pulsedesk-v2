@@ -42,7 +42,7 @@ Repo mein sirf source + scripts hain — `bin/`, `obj/`, `dist/` (binaries, SQLi
 |---|---|
 | Remote mouse + keyboard control (Windows agent) | ✅ |
 | Employee keyboard/mouse locked while admin controls | ✅ |
-| Live view: full screen, minimize, quality selector | ✅ |
+| Live view: full screen, minimize, Full HD 1080p/Ultra quality, zoom for text | ✅ |
 | Phone/tablet console (PWA + touch control) | ✅ |
 | Devices list, online/offline, last seen | ✅ |
 | Live screen view (WebSocket JPEG stream) | ✅ |

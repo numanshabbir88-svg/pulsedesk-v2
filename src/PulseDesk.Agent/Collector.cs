@@ -38,9 +38,9 @@ public sealed class Collector : BackgroundService
     private long _lastControlSeen;
     private long _lastNudge;
     private readonly SemaphoreSlim _wsSend = new(1, 1);
-    private volatile int _liveWidth = 1600;
-    private volatile int _liveQuality = 65;
-    private volatile int _liveIntervalMs = 350;
+    private volatile int _liveWidth = 1920;
+    private volatile int _liveQuality = 82;
+    private volatile int _liveIntervalMs = 400;
 
     public Collector(Settings s)
     {
@@ -177,6 +177,9 @@ public sealed class Collector : BackgroundService
         catch (Exception ex) { Settings.Log("shot fail: " + ex.Message); }
     }
 
+    private static readonly ImageCodecInfo JpegCodec =
+        ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
+
     private static byte[]? CaptureJpeg(int maxWidth, long quality)
     {
         // Capture the PRIMARY screen only. VirtualScreen merges every monitor into one very
@@ -206,10 +209,9 @@ public sealed class Collector : BackgroundService
         }
 
         using var ms = new MemoryStream();
-        var enc = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
         using var pars = new EncoderParameters(1);
         pars.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, quality);
-        target.Save(ms, enc, pars);
+        target.Save(ms, JpegCodec, pars);
         scaled?.Dispose();
         return ms.ToArray();
     }
@@ -303,15 +305,15 @@ public sealed class Collector : BackgroundService
                     Settings.Log("resumed by admin");
                     break;
                 case "shot-now":
-                    _ = CaptureAndUpload(1600, 78);
+                    _ = CaptureAndUpload(1920, 85);
                     break;
 
-                // ---- live quality (admin can pick Sharp / Balanced / Fast)
+                // ---- live quality (admin can pick Full HD 1080p / Ultra / Balanced / Fast)
                 case "quality":
                     if (j.TryGetProperty("width", out var w) && w.TryGetInt32(out var wv))
-                        _liveWidth = Math.Clamp(wv, 480, 2560);
+                        _liveWidth = Math.Clamp(wv, 480, 3840);
                     if (j.TryGetProperty("q", out var q) && q.TryGetInt32(out var qv))
-                        _liveQuality = Math.Clamp(qv, 20, 90);
+                        _liveQuality = Math.Clamp(qv, 20, 95);
                     if (j.TryGetProperty("ms", out var m) && m.TryGetInt32(out var mv))
                         _liveIntervalMs = Math.Clamp(mv, 120, 2000);
                     break;

@@ -145,8 +145,14 @@ Work-profile enrolment keeps personal data and does **not** require a factory re
 
 - [ ] Dashboard → **Live screen** → device select → **Connect**.
 - [ ] Image par click = **full screen**; **Exit full screen** se wapas. **Minimize** = full screen band.
-- [ ] **Quality: Sharp / Balanced / Fast** — Sharp = 1920px @ 80%, Balanced = 1600px @ 68% (~3 fps),
-      Fast = 1280px @ 52% (slow internet / mobile data).
+- [ ] **Quality: Full HD 1080p / Ultra / Balanced / Fast** — Full HD = 1920px @ 84% (default, sharp
+      text), Ultra = 2560px @ 88% (2K/4K screens), Balanced = 1600px @ 72%, Fast = 1280px @ 55%
+      (slow internet / mobile data).
+- [ ] **Zoom: Fit / 100% / 150% / 200%** — chhota text parhne ke liye. 100% = stream ke asli pixels,
+      image ko scroll karke pan karein. Remote control ON hone par mouse coordinates zoom ke saath
+      khud adjust hote hain.
+- [ ] Agent ab **DPI-aware** hai (PerMonitorV2): 125%/150% display scaling wale laptop par bhi
+      capture asli pixels me hota hai, is liye text blurry nahi aata.
 - [ ] **Remote control** dabao → "Stop control" ho jata hai. Iske baad:
       * employee ka **keyboard + mouse block** ho jata hai (local input swallow hota hai)
       * admin ka mouse move, left/right/middle click, scroll — sab device par chalta hai
@@ -194,7 +200,11 @@ Mahdoodiyat (mobile par):
 
 - Live view aur screenshots har phone par chalta hai; remote control sirf **Windows** agents par.
 - Phone keyboard shortcuts (Ctrl+C etc.) mobile browsers nahi bhejte — text box se normal typing karein.
-- Bahut chhoti screen par live image ki tafseel kam dikhti hai; detail ke liye `Quality: Sharp` chunein.
+- Bahut chhoti screen par live image ki tafseel kam dikhti hai; detail ke liye `Zoom: 100%` ya
+  `Quality: Ultra` chunein.
+- **Text blurry / words clear nahi** — (1) laptop par naya agent install karo (DPI-aware build),
+  (2) dashboard par **Ctrl+F5**, (3) `Quality: Full HD 1080p`, (4) zaroorat par `Zoom: 100%`.
+  Purana agent 125%/150% scaling par Windows ke stretch ki wajah se blurry capture bhejta tha.
 - Elevation wali windows (Task Manager / UAC) par click nahi jata — Windows ka integrity level rok.
 
 ---

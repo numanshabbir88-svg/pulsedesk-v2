@@ -89,7 +89,10 @@
     display:grid;place-items:center;padding:8px;min-height:220px}
   #liveStage{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;
     background:#04100f;outline:none}
-  #liveImg{display:none;max-width:100%;max-height:calc(100vh - 320px);width:auto;height:auto;object-fit:contain;
+  /* zoomed view: real pixels, scroll to pan (text stays readable) */
+  #liveStage.zoomed{align-items:flex-start;justify-content:flex-start;overflow:auto}
+  #liveStage.zoomed #liveImg, #liveStage:fullscreen.zoomed #liveImg{max-width:none;max-height:none;image-rendering:auto}
+  #liveImg{display:none;max-width:100%;max-height:calc(100vh - 250px);width:auto;height:auto;object-fit:contain;
     border-radius:6px;user-select:none;-webkit-user-drag:none}
   #liveStage.control #liveImg{cursor:crosshair;box-shadow:0 0 0 2px var(--coral)}
   #liveStage:fullscreen{background:#000;padding:0}
@@ -181,10 +184,17 @@
         <button class="btn sm ghost" id="btnFull" onclick="toggleFullscreen()">Full screen</button>
         <button class="btn sm ghost" onclick="minimizeLive()">Minimize</button>
         <button class="btn sm ghost" id="btnCtl" onclick="toggleControl()">Remote control</button>
-        <select id="liveQuality" style="max-width:150px" onchange="applyQuality()" title="Stream quality">
-          <option value="sharp">Quality: Sharp</option>
-          <option value="balanced" selected>Quality: Balanced</option>
+        <select id="liveQuality" style="max-width:180px" onchange="applyQuality()" title="Stream quality">
+          <option value="hd" selected>Quality: Full HD 1080p</option>
+          <option value="ultra">Quality: Ultra (2K text)</option>
+          <option value="balanced">Quality: Balanced</option>
           <option value="fast">Quality: Fast</option>
+        </select>
+        <select id="liveZoom" style="max-width:130px" onchange="applyZoom()" title="Zoom (text parhne ke liye)">
+          <option value="0" selected>Zoom: Fit</option>
+          <option value="1">Zoom: 100%</option>
+          <option value="1.5">Zoom: 150%</option>
+          <option value="2">Zoom: 200%</option>
         </select>
         <span class="spacer"></span>
         <span class="pill" id="liveState"><span class="dot" style="width:6px;height:6px;border-radius:50%;background:#8faeaa"></span> idle</span>
@@ -196,7 +206,7 @@
           <div id="liveMsg">Live view connect karein</div>
         </div>
       </div>
-      <div id="liveHint">Tip: image par click karein -> full screen. Remote control ON hone par aapka mouse/keyboard device par chalta hai.</div>
+      <div id="liveHint">Tip: image par click karein -&gt; full screen. Chhota text parhne ke liye Zoom: 100% ya 150% chunein. Remote control ON hone par aapka mouse/keyboard device par chalta hai.</div>
 
       <!-- phone / tablet remote control -->
       <div id="touchBar">
@@ -372,10 +382,26 @@ let controlOn = false, liveDevice = '', lastMoveSent = 0;
 let statusTimer = null, liveLocked = false, lockToastShown = false;
 
 const QUALITY = {
-  sharp:    { width: 1920, q: 80, ms: 420 },
-  balanced: { width: 1600, q: 68, ms: 350 },
-  fast:     { width: 1280, q: 52, ms: 240 }
+  hd:       { width: 1920, q: 84, ms: 400 },
+  ultra:    { width: 2560, q: 88, ms: 550 },
+  balanced: { width: 1600, q: 72, ms: 320 },
+  fast:     { width: 1280, q: 55, ms: 220 }
 };
+
+/* ---- zoom (Fit = browser scales, 100%+ = real stream pixels, scroll to pan) ---- */
+function applyZoom(){
+  const img = $('#liveImg'), st = $('#liveStage'), sel = $('#liveZoom');
+  if(!img || !st || !sel) return;
+  const z = parseFloat(sel.value) || 0;
+  st.classList.toggle('zoomed', z > 0);
+  if(z > 0 && img.naturalWidth){
+    img.style.width = Math.round(img.naturalWidth * z) + 'px';
+    img.style.height = 'auto';
+  } else {
+    img.style.width = ''; img.style.height = '';
+  }
+}
+$('#liveImg').addEventListener('load', applyZoom);
 
 function liveSend(obj){
   if(liveWs && liveWs.readyState === 1) liveWs.send(JSON.stringify(obj));
@@ -415,7 +441,7 @@ function stopLive(){
 }
 
 function applyQuality(quiet){
-  const p = QUALITY[$('#liveQuality').value] || QUALITY.balanced;
+  const p = QUALITY[$('#liveQuality').value] || QUALITY.hd;
   liveSend({ cmd:'quality', width:p.width, q:p.q, ms:p.ms });
   if(!quiet) toast('Stream quality: ' + $('#liveQuality').value);
 }

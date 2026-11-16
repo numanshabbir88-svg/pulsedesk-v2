@@ -53,6 +53,11 @@ internal static class Program
 
     private static int RunCollector(string[] args)
     {
+        // PerMonitorV2: without it Windows bitmap-stretches the process on 125%/150% scaled
+        // laptops, so the screen capture (and the mouse mapping) becomes blurry. Must run
+        // before any window/handle is created.
+        try { Application.SetHighDpiMode(HighDpiMode.PerMonitorV2); } catch { }
+
         // One agent per user session - avoids double samples when both startup + manual run happen.
         using var mutex = new Mutex(true, @"Local\PulseDeskAgent", out var fresh);
         if (!fresh) return 0;
