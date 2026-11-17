@@ -792,10 +792,20 @@ function copyLink(url){
 }
 async function loadInvites(){
   const list = await api('/api/admin/invites');
-  $('#invRows').innerHTML = list.map(i=>`
+  // Full absolute link (not a bare /join/CODE) - a relative path pasted into a browser
+  // gives "site can't be reached" on the employee's machine. Prefer the server-provided
+  // public link (always the funnel URL); fall back to the current origin for old builds.
+  const base = (window.PDS_BASE || '').replace(/\/$/,'');
+  const linkOf = i => i.link || (base ? location.origin + base : location.origin) + '/join/' + i.code;
+  $('#invRows').innerHTML = list.map(i=>{
+    const link = linkOf(i);
+    return `
     <tr><td class="mono">${i.code}</td><td>${esc(i.email)}</td><td style="font-size:12px">${fmt(i.created)}</td>
     <td>${i.used?'<span class="pill on">used</span>':'<span class="pill">pending</span>'}</td>
-    <td><span class="mono" style="font-size:11.5px;color:#7fd8cc">/join/${i.code}</span></td></tr>`).join('')
+    <td style="max-width:360px"><a class="mono" href="${link}" target="_blank"
+          style="font-size:11.5px;color:#7fd8cc;word-break:break-all">${link}</a>
+        <button class="btn sm ghost" style="margin-left:8px" onclick="copyLink('${link}')">Copy</button></td></tr>`;
+  }).join('')
     || '<tr><td colspan="5" style="color:var(--muted);padding:20px">No invites</td></tr>';
 }
 

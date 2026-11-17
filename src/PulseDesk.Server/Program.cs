@@ -631,7 +631,12 @@ app.MapGet("/api/admin/invites", (HttpRequest req) =>
     var list = new List<object>();
     using var rd = cmd.ExecuteReader();
     while (rd.Read())
-        list.Add(new { code = rd.GetString(0), email = rd.GetString(1), created = rd.GetString(2), used = rd.IsDBNull(3) ? "" : rd.GetString(3) });
+    {
+        var code = rd.GetString(0);
+        list.Add(new { code, email = rd.GetString(1), created = rd.GetString(2),
+                       used = rd.IsDBNull(3) ? "" : rd.GetString(3),
+                       link = $"{PublicBase}/join/{code}" });
+    }
     return Results.Json(list);
 });
 
