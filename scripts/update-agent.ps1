@@ -39,8 +39,29 @@ Write-Host "Naya agent copy: $Source -> $target" -ForegroundColor Cyan
 Copy-Item $Source $target -Force
 
 Write-Host "Agent start..." -ForegroundColor Cyan
-Start-Process $target
+# --run: start the background collector. Without arguments an installed agent opens the
+# employee home window instead (that is the desktop / Start Menu icon behaviour).
+Start-Process $target -ArgumentList '--run'
 Start-Sleep -Seconds 4
+
+# Make sure the Desktop + Start Menu icons exist (older installs had none).
+$iconTarget = $target
+$installDir = Split-Path -Parent $target
+foreach ($folder in @([Environment]::GetFolderPath('CommonDesktopDirectory'),
+                      [Environment]::GetFolderPath('CommonPrograms'))) {
+    if ([string]::IsNullOrWhiteSpace($folder)) { continue }
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $lnk = $shell.CreateShortcut((Join-Path $folder 'PulseDesk.lnk'))
+        $lnk.TargetPath = $iconTarget
+        $lnk.Arguments = '--home'
+        $lnk.WorkingDirectory = $installDir
+        $lnk.IconLocation = "$iconTarget,0"
+        $lnk.Description = 'PulseDesk - monitoring status and privacy'
+        $lnk.Save()
+        Write-Host "icon -> $(Join-Path $folder 'PulseDesk.lnk')"
+    } catch { Write-Host "icon failed: $($_.Exception.Message)" }
+}
 
 $p = Get-Process PulseDesk.Agent -ErrorAction SilentlyContinue | Select-Object -First 1
 $hash = (Get-FileHash $target).Hash

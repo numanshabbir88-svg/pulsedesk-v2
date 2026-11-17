@@ -92,6 +92,43 @@ internal static class Native
     internal const int SM_CXVIRTUALSCREEN = 78;
     internal const int SM_CYVIRTUALSCREEN = 79;
 
+    // ---- fast screen copy (GDI StretchBlt: capture + downscale in one step) ----
+    internal const int HALFTONE = 4;
+
+    [DllImport("user32.dll")]
+    internal static extern IntPtr GetDC(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    internal static extern int ReleaseDC(IntPtr hWnd, IntPtr hDc);
+
+    [DllImport("gdi32.dll")]
+    internal static extern IntPtr CreateCompatibleDC(IntPtr hDc);
+
+    [DllImport("gdi32.dll")]
+    internal static extern IntPtr CreateCompatibleBitmap(IntPtr hDc, int width, int height);
+
+    [DllImport("gdi32.dll")]
+    internal static extern IntPtr SelectObject(IntPtr hDc, IntPtr obj);
+
+    [DllImport("gdi32.dll")]
+    internal static extern bool DeleteObject(IntPtr obj);
+
+    [DllImport("gdi32.dll")]
+    internal static extern bool DeleteDC(IntPtr hDc);
+
+    [DllImport("gdi32.dll")]
+    internal static extern int SetStretchBltMode(IntPtr hDc, int mode);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    internal static extern bool StretchBlt(IntPtr hDcDest, int xDest, int yDest, int wDest, int hDest,
+        IntPtr hDcSrc, int xSrc, int ySrc, int wSrc, int hSrc, uint rop);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    internal static extern bool BitBlt(IntPtr hDcDest, int xDest, int yDest, int w, int h,
+        IntPtr hDcSrc, int xSrc, int ySrc, uint rop);
+
+    internal const uint SRCCOPY = 0x00CC0020;
+
     internal static int IdleSeconds()
     {
         var info = new LASTINPUTINFO { cbSize = 8 };

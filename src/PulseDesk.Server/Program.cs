@@ -392,7 +392,7 @@ app.MapPost("/api/agent/frame", async (HttpRequest req) =>
     db.Touch(conn, did);
     var live = app.Services.GetRequiredService<Live>();
     if (!live.HasViewers(did)) return Results.Json(new { ok = true, streamed = false });
-    await live.FanoutFrame(did, ms.GetBuffer(), (int)ms.Length);
+    live.FanoutFrame(did, ms.GetBuffer(), (int)ms.Length);
     return Results.Json(new { ok = true, streamed = true });
 });
 
@@ -693,17 +693,38 @@ app.Map("/ws/agent", async (HttpContext ctx) =>
     var live = app.Services.GetRequiredService<Live>();
     live.AddAgent(did, ws);
 
+    // The agent reconnects after a network change / sleep. If an admin is already watching
+    // this device, streaming must resume by itself instead of waiting for a page reload.
+    if (live.HasViewers(did))
+        await live.NotifyAgent(did, "{\"cmd\":\"stream\",\"on\":true}");
+
     var buf = new byte[512 * 1024];
+    // Frames larger than the buffer (2K / busy screens) arrive in several WebSocket chunks;
+    // they are assembled here so the admin never receives a torn JPEG.
+    using var frame = new MemoryStream(512 * 1024);
     try
     {
         while (ws.State == WebSocketState.Open)
         {
             var res = await ws.ReceiveAsync(buf, CancellationToken.None);
             if (res.MessageType == WebSocketMessageType.Close) break;
-            if (res.MessageType == WebSocketMessageType.Binary)
-                await live.FanoutFrame(did, buf, res.Count);
-            else if (res.MessageType == WebSocketMessageType.Text)
-                await live.FanoutText(did, Encoding.UTF8.GetString(buf, 0, res.Count));
+
+            var isText = res.MessageType == WebSocketMessageType.Text;
+            if (frame.Length == 0 && res.EndOfMessage)
+            {
+                if (isText) live.FanoutText(did, Encoding.UTF8.GetString(buf, 0, res.Count));
+                else live.FanoutFrame(did, buf, res.Count);
+                continue;
+            }
+
+            frame.Write(buf, 0, res.Count);
+            if (!res.EndOfMessage) continue;
+
+            var payload = frame.GetBuffer();
+            var len = (int)frame.Length;
+            if (isText) live.FanoutText(did, Encoding.UTF8.GetString(payload, 0, len));
+            else live.FanoutFrame(did, payload, len);
+            frame.SetLength(0);
         }
     }
     catch { }

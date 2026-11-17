@@ -28,6 +28,9 @@ internal static class Program
             return mode == "--install" ? Installer.Run() : Installer.Uninstall();
         }
 
+        // ---- local diagnostic: capture / hash / JPEG timing (writes a text file, no window)
+        if (mode == "--bench") { Collector.Benchmark(args.Length > 1 ? args[1] : null); return 0; }
+
         // ---- explicit background run (auto-start)
         if (mode == "--run") return RunCollector(args);
 
@@ -62,7 +65,9 @@ internal static class Program
     {
         // DPI mode is set once at the top of Main (before any window exists).
         // One agent per user session - avoids double samples when both startup + manual run happen.
-        using var mutex = new Mutex(true, @"Local\PulseDeskAgent", out var fresh);
+        // PDS_TEST lets a diagnostic copy run alongside the installed agent without UAC.
+        var mutexName = @"Local\PulseDeskAgent" + (Environment.GetEnvironmentVariable("PDS_TEST") ?? "");
+        using var mutex = new Mutex(true, mutexName, out var fresh);
         if (!fresh) return 0;
 
         var settings = Settings.Load();

@@ -171,9 +171,19 @@ Work-profile enrolment keeps personal data and does **not** require a factory re
 
 - [ ] Dashboard → **Live screen** → device select → **Connect**.
 - [ ] Image par click = **full screen**; **Exit full screen** se wapas. **Minimize** = full screen band.
-- [ ] **Quality: Full HD 1080p / Ultra / Balanced / Fast** — Full HD = 1920px @ 84% (default, sharp
-      text), Ultra = 2560px @ 88% (2K/4K screens), Balanced = 1600px @ 72%, Fast = 1280px @ 55%
-      (slow internet / mobile data).
+- [ ] **Quality: Full HD 1080p / Ultra / Balanced / Fast — Fast (low latency)** — Full HD = up to
+      1920px @ 76% (default, sharp text, ~10 fps production), Ultra = 2560px @ 84% (2K/4K screens;
+      par 1600px laptop par scaling slow hoga), Balanced = up to 1600px @ 66% (~14 fps),
+      Fast = native resolution @ 50% (~20 fps cap, ~15 fps actual; slow internet / mobile data).
+      Downscaling se capture slow hota hai, is liye Fast me resolution kam nahi, sirf JPEG quality
+      kam ki gayi hai - text phir bhi parha jata hai.
+- [ ] Jab **Remote control ON** hota hai to agent khud low-latency mode (native capture, 50 ms target)
+      me chala jata hai aur **Stop control** par aapki chosen quality wapas aa jati hai - is se mouse
+      aur keyboard zyada responsive lagte hain.
+- [ ] Live stream screen **unchanged** hone par frames skip hoti hain (CPU aur data bachta hai),
+      aur slow connection par purane frames drop ho kar latest frame jata hai - video lag nahi karti.
+- [ ] Connection bik jaye (laptop sleep, Wi-Fi change, phone lock) to dashboard khud reconnect karta
+      hai aur agent bhi 3 second me wapas connect ho kar stream resume kar deta hai.
 - [ ] **Zoom: Fit / 100% / 150% / 200%** — chhota text parhne ke liye. 100% = stream ke asli pixels,
       image ko scroll karke pan karein. Remote control ON hone par mouse coordinates zoom ke saath
       khud adjust hote hain.

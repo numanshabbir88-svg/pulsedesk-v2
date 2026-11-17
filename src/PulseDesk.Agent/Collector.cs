@@ -38,9 +38,20 @@ public sealed class Collector : BackgroundService
     private long _lastControlSeen;
     private long _lastNudge;
     private readonly SemaphoreSlim _wsSend = new(1, 1);
-    private volatile int _liveWidth = 1920;
-    private volatile int _liveQuality = 82;
-    private volatile int _liveIntervalMs = 400;
+    private volatile int _liveWidth = 1600;
+    private volatile int _liveQuality = 72;
+    private volatile int _liveIntervalMs = 90;
+
+    // Rolling per-frame costs, logged every 30 frames ("live perf" in agent.log).
+    private int _perfFrames;
+    private long _perfCaptureMs;
+    private long _perfSendMs;
+    private long _perfBytes;
+
+    // While remote control is active the stream switches to a low-latency preset; these keep
+    // the admin's chosen quality so it can be restored on STOP / watchdog / disconnect.
+    private bool _controlQualitySaved;
+    private int _savedWidth, _savedQuality, _savedInterval;
 
     public Collector(Settings s)
     {
@@ -75,9 +86,7 @@ public sealed class Collector : BackgroundService
                 // 45 seconds, release remote control so the employee never stays locked out.
                 if (_controlOn && Environment.TickCount64 - _lastControlSeen > 45_000)
                 {
-                    _controlOn = false;
-                    ControlBanner.Hide();
-                    Settings.Log("remote control auto-released (no admin heartbeat)");
+                    StopControl("remote control auto-released (no admin heartbeat)");
                 }
 
                 // While the admin is in control the laptop must not fall asleep or auto-lock
@@ -180,40 +189,194 @@ public sealed class Collector : BackgroundService
     private static readonly ImageCodecInfo JpegCodec =
         ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
 
-    private static byte[]? CaptureJpeg(int maxWidth, long quality)
+    private static ulong _lastHash;
+    private static bool _hashValid;
+
+    private static byte[]? CaptureJpeg(int maxWidth, long quality, bool skipUnchanged = false)
     {
         // Capture the PRIMARY screen only. VirtualScreen merges every monitor into one very
         // wide bitmap, which is why the admin preview looked cropped / squeezed on laptops
         // with a second display.
         var b = PrimaryScreenBounds();
         if (b.Width <= 0 || b.Height <= 0) return null;
-        using var bmp = new Bitmap(b.Width, b.Height, PixelFormat.Format24bppRgb);
-        using (var g = Graphics.FromImage(bmp))
-        {
-            g.CopyFromScreen(b.Left, b.Top, 0, 0, b.Size, CopyPixelOperation.SourceCopy);
-        }
 
-        Image target = bmp;
-        Bitmap? scaled = null;
+        int w = b.Width, h = b.Height;
         if (b.Width > maxWidth)
         {
-            int w = maxWidth, h = (int)Math.Round(b.Height * (maxWidth / (double)b.Width));
-            scaled = new Bitmap(w, h);
-            using var g2 = Graphics.FromImage(scaled);
-            g2.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-            g2.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighQuality;
-            g2.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
-            g2.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
-            g2.DrawImage(bmp, 0, 0, w, h);
-            target = scaled;
+            w = maxWidth;
+            h = Math.Max(1, (int)Math.Round(b.Height * (maxWidth / (double)b.Width)));
         }
 
-        using var ms = new MemoryStream();
+        using var bmp = CaptureScreen(b, w, h);
+
+        if (skipUnchanged)
+        {
+            var hash = SampleHash(bmp);
+            if (_hashValid && hash == _lastHash) return null;   // nothing moved: no encode, no send
+            _lastHash = hash;
+            _hashValid = true;
+        }
+
+        return EncodeJpeg(bmp, quality);
+    }
+
+    /// <summary>JPEG-encodes a captured frame with the cached codec (no per-call lookup).</summary>
+    private static byte[] EncodeJpeg(Bitmap bmp, long quality)
+    {
+        using var ms = new MemoryStream(96 * 1024);
         using var pars = new EncoderParameters(1);
-        pars.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, quality);
-        target.Save(ms, JpegCodec, pars);
-        scaled?.Dispose();
+        pars.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality,
+            Math.Clamp(quality, 20, 95));
+        bmp.Save(ms, JpegCodec, pars);
         return ms.ToArray();
+    }
+
+    /// <summary>
+    /// Local diagnostic (`PulseDesk.Agent.exe --bench [file]`): times capture, change-hash and
+    /// JPEG encode for every preset and writes the numbers to a text file. It answers one
+    /// question - is the live frame rate limited by this laptop's CPU or by the network?
+    /// </summary>
+    public static void Benchmark(string? outPath, int frames = 30)
+    {
+        var path = string.IsNullOrWhiteSpace(outPath)
+            ? Path.Combine(Settings.Dir, "bench.txt")
+            : outPath;
+        var lines = new List<string>();
+        var b = PrimaryScreenBounds();
+        lines.Add($"{DateTime.Now:yyyy-MM-dd HH:mm:ss}  screen {b.Width}x{b.Height}  {frames} frames/preset");
+
+        var presets = new (string name, int width, long q)[]
+        {
+            ("hd 1920/76", 1920, 76),
+            ("balanced 1600/66", 1600, 66),
+            ("fast 1280/50", 1280, 50),
+            ("tiny 960/45", 960, 45),
+        };
+
+        foreach (var (name, width, q) in presets)
+        {
+            int w = b.Width, h = b.Height;
+            if (b.Width > width)
+            {
+                w = width;
+                h = Math.Max(1, (int)Math.Round(b.Height * (width / (double)b.Width)));
+            }
+
+            double cap = 0, hash = 0, enc = 0;
+            long bytes = 0;
+            for (int i = 0; i < frames; i++)
+            {
+                var sw = Stopwatch.StartNew();
+                using var bmp = CaptureScreen(b, w, h);
+                cap += sw.Elapsed.TotalMilliseconds;
+
+                sw.Restart();
+                SampleHash(bmp);
+                hash += sw.Elapsed.TotalMilliseconds;
+
+                sw.Restart();
+                var jpg = EncodeJpeg(bmp, q);
+                enc += sw.Elapsed.TotalMilliseconds;
+                bytes += jpg.Length;
+
+                Thread.Sleep(25);   // let the desktop change a little between frames
+            }
+
+            var total = (cap + hash + enc) / frames;
+            lines.Add($"{name,-18} {w}x{h,-9} capture {cap / frames,6:F1} ms | hash {hash / frames,5:F1} ms | " +
+                      $"jpeg {enc / frames,6:F1} ms | total {total,6:F1} ms | max {1000 / total,5:F1} fps | " +
+                      $"{bytes / frames / 1024.0,6:F1} KB/frame");
+        }
+
+        try { File.WriteAllLines(path, lines); } catch { }
+        Settings.Log("bench: " + path);
+    }
+
+    /// <summary>
+    /// Cheap fingerprint of a frame (48x27 sampled pixels). Identical fingerprints mean the
+    /// screen did not change, so the frame is skipped entirely - this keeps live streaming
+    /// light on idle desktops and leaves the CPU free to encode real motion.
+    /// </summary>
+    private static ulong SampleHash(Bitmap bmp)
+    {
+        ulong h = 1469598103934665603UL;   // FNV-1a
+        const int cols = 48, rows = 27;
+        int dx = Math.Max(1, bmp.Width / cols), dy = Math.Max(1, bmp.Height / rows);
+        for (int y = 0; y < bmp.Height; y += dy)
+        {
+            for (int x = 0; x < bmp.Width; x += dx)
+            {
+                var c = bmp.GetPixel(x, y);
+                h = (h ^ c.R) * 1099511628211UL;
+                h = (h ^ c.G) * 1099511628211UL;
+                h = (h ^ c.B) * 1099511628211UL;
+            }
+        }
+        return h;
+    }
+
+    /// <summary>
+    /// Copies the screen straight into a bitmap of the requested (already scaled) size with
+    /// BitBlt/StretchBlt, so there is no full-resolution intermediate bitmap and no per-frame
+    /// high-quality GDI+ resampling. That is what makes the live stream smooth.
+    /// </summary>
+    private static Bitmap CaptureScreen(Rectangle src, int w, int h)
+    {
+        IntPtr screenDc = Native.GetDC(IntPtr.Zero);
+        if (screenDc == IntPtr.Zero) return CaptureFallback(src, w, h);
+        IntPtr memDc = IntPtr.Zero, hbmp = IntPtr.Zero, old = IntPtr.Zero;
+        try
+        {
+            memDc = Native.CreateCompatibleDC(screenDc);
+            hbmp = Native.CreateCompatibleBitmap(screenDc, w, h);
+            if (memDc != IntPtr.Zero && hbmp != IntPtr.Zero)
+            {
+                old = Native.SelectObject(memDc, hbmp);
+                bool ok;
+                if (w == src.Width && h == src.Height)
+                {
+                    // 1:1 copy - no resampling, the cheapest and sharpest path
+                    ok = Native.BitBlt(memDc, 0, 0, w, h, screenDc, src.Left, src.Top, Native.SRCCOPY);
+                }
+                else
+                {
+                    Native.SetStretchBltMode(memDc, Native.HALFTONE);
+                    ok = Native.StretchBlt(memDc, 0, 0, w, h, screenDc, src.Left, src.Top,
+                        src.Width, src.Height, Native.SRCCOPY);
+                }
+                if (ok) return Image.FromHbitmap(hbmp);
+            }
+        }
+        catch { }
+        finally
+        {
+            if (memDc != IntPtr.Zero && old != IntPtr.Zero) Native.SelectObject(memDc, old);
+            if (hbmp != IntPtr.Zero) Native.DeleteObject(hbmp);
+            if (memDc != IntPtr.Zero) Native.DeleteDC(memDc);
+            Native.ReleaseDC(IntPtr.Zero, screenDc);
+        }
+        return CaptureFallback(src, w, h);
+    }
+
+    /// <summary>GDI+ path used only when the GDI copy fails (rare, e.g. protected content).</summary>
+    private static Bitmap CaptureFallback(Rectangle src, int w, int h)
+    {
+        var target = new Bitmap(w, h, PixelFormat.Format24bppRgb);
+        using var full = CaptureFull(src);
+        using var g = Graphics.FromImage(target);
+        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
+        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighSpeed;
+        g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+        g.DrawImage(full, 0, 0, w, h);
+        return target;
+    }
+
+    private static Bitmap CaptureFull(Rectangle src)
+    {
+        var full = new Bitmap(src.Width, src.Height, PixelFormat.Format24bppRgb);
+        using var g = Graphics.FromImage(full);
+        g.CopyFromScreen(src.Left, src.Top, 0, 0, src.Size, CopyPixelOperation.SourceCopy);
+        return full;
     }
 
     private static Rectangle PrimaryScreenBounds()
@@ -236,22 +399,43 @@ public sealed class Collector : BackgroundService
             {
                 if (_streamOn && _ws is { State: System.Net.WebSockets.WebSocketState.Open })
                 {
+                    var sw = Stopwatch.StartNew();
                     var ws = _ws;
-                    var bytes = CaptureJpeg(_liveWidth, _liveQuality);
+                    var bytes = CaptureJpeg(_liveWidth, _liveQuality, true);
+                    long captureMs = sw.ElapsedMilliseconds;
+                    long sendMs = 0;
                     if (bytes != null && ws != null)
                     {
                         await _wsSend.WaitAsync(ct);
                         try
                         {
+                            var sendSw = Stopwatch.StartNew();
                             await ws.SendAsync(bytes, System.Net.WebSockets.WebSocketMessageType.Binary, true, ct);
+                            sendMs = sendSw.ElapsedMilliseconds;
                         }
                         finally { _wsSend.Release(); }
                     }
-                    await Task.Delay(_liveIntervalMs, ct);
+
+                    _perfFrames++;
+                    _perfCaptureMs += captureMs;
+                    _perfSendMs += sendMs;
+                    _perfBytes += bytes?.Length ?? 0;
+                    if (_perfFrames >= 30)
+                    {
+                        Settings.Log($"live perf: capture {_perfCaptureMs / _perfFrames} ms, " +
+                                     $"send {_perfSendMs / _perfFrames} ms, " +
+                                     $"{_perfBytes / _perfFrames / 1024} KB/frame, " +
+                                     $"target {_liveIntervalMs} ms");
+                        _perfFrames = 0; _perfCaptureMs = 0; _perfSendMs = 0; _perfBytes = 0;
+                    }
+
+                    // Keep the requested frame rate: wait only for the time capture+send did not use.
+                    var wait = _liveIntervalMs - (int)sw.ElapsedMilliseconds;
+                    await Task.Delay(Math.Max(10, wait), ct);
                 }
-                else await Task.Delay(700, ct);
+                else await Task.Delay(500, ct);
             }
-            catch { await Task.Delay(1500, ct); }
+            catch { await Task.Delay(1000, ct); }
         }
     }
 
@@ -267,6 +451,8 @@ public sealed class Collector : BackgroundService
             {
                 var ws = new ClientWebSocket();
                 ws.Options.Proxy = null;   // direct connection, never use a stale system proxy
+                // keeps NAT / mobile-router mappings alive when the stream is idle
+                ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(20);
                 await ws.ConnectAsync(new Uri(url), ct);
                 _ws = ws;
                 Settings.Log("ws connected");
@@ -280,9 +466,30 @@ public sealed class Collector : BackgroundService
                 }
             }
             catch (Exception ex) { Settings.Log("ws: " + ex.Message); }
-            finally { _ws = null; _streamOn = false; }
-            await Task.Delay(5000, ct);
+            finally { StopControl("remote control auto-released (agent disconnected)"); _ws = null; _streamOn = false; }
+            await Task.Delay(3000, ct);
         }
+    }
+
+    /// <summary>
+    /// Single place that releases remote control: hides the banner, releases the input hooks
+    /// and restores the quality the admin had chosen before control started. Used by the STOP
+    /// command, the 45 s watchdog and the socket-disconnect safety path.
+    /// </summary>
+    private void StopControl(string reason)
+    {
+        if (!_controlOn) return;
+        _controlOn = false;
+        ControlBanner.Hide();
+        if (_controlQualitySaved)
+        {
+            _liveWidth = _savedWidth;
+            _liveQuality = _savedQuality;
+            _liveIntervalMs = _savedInterval;
+            _controlQualitySaved = false;
+            _hashValid = false;
+        }
+        Settings.Log(reason);
     }
 
     private void HandleCommand(string json)
@@ -295,6 +502,7 @@ public sealed class Collector : BackgroundService
             {
                 case "stream":
                     _streamOn = j.TryGetProperty("on", out var on) && on.GetBoolean();
+                    if (_streamOn) _hashValid = false;   // a new viewer always gets a first frame
                     break;
                 case "pause":
                     _s.Paused = true; _s.Save();
@@ -315,11 +523,25 @@ public sealed class Collector : BackgroundService
                     if (j.TryGetProperty("q", out var q) && q.TryGetInt32(out var qv))
                         _liveQuality = Math.Clamp(qv, 20, 95);
                     if (j.TryGetProperty("ms", out var m) && m.TryGetInt32(out var mv))
-                        _liveIntervalMs = Math.Clamp(mv, 120, 2000);
+                        _liveIntervalMs = Math.Clamp(mv, 40, 2000);
+                    _hashValid = false;   // quality change must produce a fresh frame
                     break;
 
                 // ---- remote control (mouse + keyboard) ----
                 case "control-on":
+                    if (!_controlOn)
+                    {
+                        // Downscaling costs MORE than a 1:1 BitBlt on integrated GPUs, so the
+                        // control preset keeps the native size and only lowers JPEG quality.
+                        _savedWidth = _liveWidth;
+                        _savedQuality = _liveQuality;
+                        _savedInterval = _liveIntervalMs;
+                        _controlQualitySaved = true;
+                        _liveWidth = 4096;      // >= screen width => no StretchBlt
+                        _liveQuality = 60;
+                        _liveIntervalMs = 50;   // ~15-20 fps while the mouse is being driven
+                        _hashValid = false;
+                    }
                     _controlOn = true;
                     _inputSeen = false;
                     _lastControlSeen = Environment.TickCount64;
@@ -332,9 +554,7 @@ public sealed class Collector : BackgroundService
                     _ = SendStatus();
                     break;
                 case "control-off":
-                    _controlOn = false;
-                    ControlBanner.Hide();
-                    Settings.Log("remote control OFF by admin (employee input restored)");
+                    StopControl("remote control OFF by admin (employee input restored)");
                     break;
                 case "ping":
                     _lastControlSeen = Environment.TickCount64;

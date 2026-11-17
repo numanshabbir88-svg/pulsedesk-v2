@@ -190,7 +190,7 @@
           <option value="hd" selected>Quality: Full HD 1080p</option>
           <option value="ultra">Quality: Ultra (2K text)</option>
           <option value="balanced">Quality: Balanced</option>
-          <option value="fast">Quality: Fast</option>
+          <option value="fast">Quality: Fast (low latency)</option>
         </select>
         <select id="liveZoom" style="max-width:130px" onchange="applyZoom()" title="Zoom (text parhne ke liye)">
           <option value="0" selected>Zoom: Fit</option>
@@ -382,13 +382,14 @@ async function cmd(deviceId, command){
 
 /* ---------------- live */
 let controlOn = false, liveDevice = '', lastMoveSent = 0;
+let liveStopped = false, liveRetry = null;
 let statusTimer = null, statusProbe = null, statusSeen = false, liveLocked = false, lockToastShown = false;
 
 const QUALITY = {
-  hd:       { width: 1920, q: 84, ms: 400 },
-  ultra:    { width: 2560, q: 88, ms: 550 },
-  balanced: { width: 1600, q: 72, ms: 320 },
-  fast:     { width: 1280, q: 55, ms: 220 }
+  hd:       { width: 1920, q: 76, ms: 100 },
+  ultra:    { width: 2560, q: 84, ms: 180 },
+  balanced: { width: 1600, q: 66, ms: 60 },
+  fast:     { width: 1920, q: 50, ms: 40 }
 };
 
 /* ---- zoom (Fit = browser scales, 100%+ = real stream pixels, scroll to pan) ---- */
@@ -412,10 +413,12 @@ function liveSend(obj){
 
 function startLive(){
   stopLive();
+  liveStopped = false;
   const id = $('#liveDev').value; if(!id){ toast('No device'); return; }
   liveDevice = id;
   const proto = location.protocol==='https:'?'wss':'ws';
   liveWs = new WebSocket(`${proto}://${location.host}${API_BASE}ws/admin?token=${encodeURIComponent(TOKEN)}&deviceId=${id}`);
+  const sock = liveWs;
   liveWs.binaryType='blob';
   $('#liveState').className='pill on'; $('#liveState').textContent='connecting';
   liveWs.onopen = ()=>{ $('#liveState').className='pill on'; $('#liveState').textContent='streaming'; applyQuality(true); startStatusPoll(); };
@@ -426,13 +429,21 @@ function startLive(){
     const img=$('#liveImg'); img.src=liveObjUrl; img.style.display='block'; $('#liveMsg').style.display='none';
   };
   liveWs.onclose = ()=>{
+    if(sock !== liveWs) return;   // socket we already replaced (quality change / reconnect)
     $('#liveState').className='pill off'; $('#liveState').textContent='disconnected';
     stopStatusPoll(); setLockUi(false);
     if(controlOn){ controlOn=false; stopControlPing(); setControlUi(); }
+    // phone locked, Wi-Fi switched, laptop slept ... reconnect by itself while this tab is open
+    if(!liveStopped){
+      if(liveRetry){ clearTimeout(liveRetry); }
+      liveRetry = setTimeout(()=>{ liveRetry=null; if(!liveStopped) startLive(); }, 1500);
+    }
   };
   liveWs.onerror = ()=>{ $('#liveState').className='pill off'; $('#liveState').textContent='error'; };
 }
 function stopLive(){
+  liveStopped = true;
+  if(liveRetry){ clearTimeout(liveRetry); liveRetry=null; }
   if(controlOn && liveWs && liveWs.readyState === 1){
     liveWs.send(JSON.stringify({cmd:'control-off'}));
   }
