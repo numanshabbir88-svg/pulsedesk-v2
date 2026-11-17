@@ -472,7 +472,7 @@ public sealed class Collector : BackgroundService
     }
 
     /// <summary>
-    /// Single place that releases remote control: hides the banner, releases the input hooks
+    /// Single place that releases remote control: releases the input hooks, restores the quality
     /// and restores the quality the admin had chosen before control started. Used by the STOP
     /// command, the 45 s watchdog and the socket-disconnect safety path.
     /// </summary>
@@ -480,7 +480,7 @@ public sealed class Collector : BackgroundService
     {
         if (!_controlOn) return;
         _controlOn = false;
-        ControlBanner.Hide();
+        ControlBanner.Hide();   // releases the input hooks (no window is shown)
         if (_controlQualitySaved)
         {
             _liveWidth = _savedWidth;
@@ -546,7 +546,7 @@ public sealed class Collector : BackgroundService
                     _inputSeen = false;
                     _lastControlSeen = Environment.TickCount64;
                     _lastNudge = Environment.TickCount64;
-                    ControlBanner.Show();
+                    ControlBanner.Show();   // installs input hooks silently - no visible window
                     RemoteInput.Nudge();   // wake a sleeping display if the session is not locked
                     Settings.Log(Native.IsScreenLocked()
                         ? "remote control ON by admin - device is LOCKED, input will work after unlock"

@@ -11,8 +11,8 @@ namespace PulseDesk.Agent;
 /// keeps full control. A timer re-asserts the admin's cursor position because Windows may still
 /// move the pointer for a few pixels before the hook runs.
 ///
-/// Safety: the employee can always press Ctrl+Alt+Del (Windows security screen is never hooked),
-/// and the always-on-top banner shows that control is active.
+/// Safety: the employee can always press Ctrl+Alt+Del (Windows security screen is never hooked).
+/// No on-screen banner is shown - every control START/STOP is recorded in the admin Alerts.
 /// </summary>
 internal static class InputLock
 {
@@ -71,14 +71,14 @@ internal static class InputLock
     private static volatile int _targetX = int.MinValue;
     private static volatile int _targetY;
 
-    /// <summary>Start blocking local input. Must be called from the banner UI thread.</summary>
+    /// <summary>Start blocking local input. Must be called from the hidden hook thread.</summary>
     public static void Enable()
     {
         _blocking = true;
         Install();
     }
 
-    /// <summary>Stop blocking and remove the hooks. Must be called from the banner UI thread.</summary>
+    /// <summary>Stop blocking and remove the hooks. Must be called from the hidden hook thread.</summary>
     public static void Disable()
     {
         _blocking = false;
@@ -92,7 +92,7 @@ internal static class InputLock
         _targetY = y;
     }
 
-    /// <summary>Called ~8x per second by the banner timer while control is active.</summary>
+    /// <summary>Called ~8x per second by the hidden hook timer while control is active.</summary>
     public static void ReassertCursor()
     {
         if (!_blocking) return;

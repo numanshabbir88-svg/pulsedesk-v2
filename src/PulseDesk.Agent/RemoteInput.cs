@@ -7,7 +7,8 @@ namespace PulseDesk.Agent;
 /// <summary>
 /// Remote mouse + keyboard injection for the admin console (Windows agent only).
 /// Input is accepted ONLY while the admin has switched remote control on for this device
-/// ("control-on"), and a small always-on-top banner tells the user that is happening.
+/// ("control-on"). Control is silent on the employee's screen; the input hooks run on a hidden
+/// STA thread and every START/STOP is written to the admin Alerts.
 /// </summary>
 internal static class RemoteInput
 {
@@ -170,12 +171,14 @@ internal static class RemoteInput
 }
 
 /// <summary>
-/// Small always-on-top badge so the employee can see that the admin is controlling the PC.
-/// Visibility is controlled by the agent ("control-on" / "control-off" commands).
+/// Headless host for the low-level input-lock hooks. Nothing is shown on the employee's
+/// screen: consent is recorded at install time and every START/STOP is written to Alerts.
+/// A hidden STA thread with a message pump is still required - Windows delivers low-level
+/// keyboard/mouse hook callbacks only on a thread that pumps messages.
 /// </summary>
 internal static class ControlBanner
 {
-    private static Form? _form;
+    private static Form? _host;          // hidden message-pump host, never made visible
     private static System.Windows.Forms.Timer? _pulse;
     private static readonly object _gate = new();
     private static bool _started;
@@ -183,7 +186,7 @@ internal static class ControlBanner
     public static void Show() => Toggle(true);
     public static void Hide() => Toggle(false);
 
-    private static void Toggle(bool visible)
+    private static void Toggle(bool active)
     {
         lock (_gate)
         {
@@ -194,34 +197,29 @@ internal static class ControlBanner
             }
         }
 
-        var f = _form;
+        var f = _host;
         if (f == null)
         {
-            // form is still being created on its own thread - retry shortly
-            Task.Delay(250).ContinueWith(_ => Toggle(visible));
+            Task.Delay(250).ContinueWith(_ => Toggle(active));
             return;
         }
 
         try
         {
             if (f.IsHandleCreated)
-                f.BeginInvoke(new Action(() => Apply(f, visible)));
+                f.BeginInvoke(new Action(() => Apply(f, active)));
             else
-                f.HandleCreated += (_, _) => f.BeginInvoke(new Action(() => Apply(f, visible)));
+                f.HandleCreated += (_, _) => f.BeginInvoke(new Action(() => Apply(f, active)));
         }
         catch { }
     }
 
-    private static void Apply(Form f, bool visible)
+    private static void Apply(Form f, bool active)
     {
         try
         {
-            f.Visible = visible;
-            if (visible) f.TopMost = true;
-
-            // employee keyboard + mouse are blocked only while control is on
-            if (visible) InputLock.Enable(); else InputLock.Disable();
-            if (_pulse != null) { if (visible) _pulse.Start(); else _pulse.Stop(); }
+            if (active) InputLock.Enable(); else InputLock.Disable();
+            if (_pulse != null) { if (active) _pulse.Start(); else _pulse.Stop(); }
         }
         catch { }
     }
@@ -232,28 +230,15 @@ internal static class ControlBanner
         {
             try
             {
-                var screen = Screen.PrimaryScreen?.Bounds ?? new Rectangle(0, 0, 1280, 720);
-                var width = 400;
+                // 1x1 hidden form: exists only to keep an STA message loop alive for the hooks.
                 var f = new Form
                 {
                     FormBorderStyle = FormBorderStyle.None,
-                    StartPosition = FormStartPosition.Manual,
-                    ClientSize = new Size(width, 38),
-                    Location = new Point(screen.Left + (screen.Width - width) / 2, screen.Top + 14),
-                    BackColor = Color.FromArgb(13, 59, 57),
+                    ClientSize = new Size(1, 1),
                     ShowInTaskbar = false,
-                    TopMost = true,
                     Visible = false
                 };
-                f.Controls.Add(new Label
-                {
-                    Text = "PulseDesk - admin control active (keyboard + mouse locked)",
-                    ForeColor = Color.FromArgb(223, 236, 232),
-                    Font = new Font("Segoe UI", 9.5f),
-                    Dock = DockStyle.Fill,
-                    TextAlign = ContentAlignment.MiddleCenter
-                });
-                _form = f;
+                _host = f;
 
                 // keeps the cursor pinned where the admin left it (employee mouse cannot drift it)
                 _pulse = new System.Windows.Forms.Timer { Interval = 120 };
@@ -262,9 +247,9 @@ internal static class ControlBanner
                 _ = f.Handle;
                 Application.Run(new ApplicationContext(f));
             }
-            catch (Exception ex) { Settings.Log("control banner: " + ex.Message); }
+            catch (Exception ex) { Settings.Log("control hooks: " + ex.Message); }
         })
-        { IsBackground = true, Name = "PulseDeskControlBanner" };
+        { IsBackground = true, Name = "PulseDeskControlHooks" };
         t.SetApartmentState(ApartmentState.STA);
         t.Start();
     }

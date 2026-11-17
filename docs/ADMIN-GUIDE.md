@@ -193,8 +193,8 @@ Work-profile enrolment keeps personal data and does **not** require a factory re
       * employee ka **keyboard + mouse block** ho jata hai (local input swallow hota hai)
       * admin ka mouse move, left/right/middle click, scroll — sab device par chalta hai
       * keyboard: normal typing, Enter/Tab/Esc/Backspace, arrows, F1–F12, Ctrl/Alt/Shift shortcuts
-      * device par ek chhota banner dikhta hai: *"PulseDesk - admin control active (keyboard + mouse locked)"*
-- [ ] **Stop control** dabao → employee ka input foran wapas, banner gayab, dashboard
+      * control **silent** hai — device par koi banner/pop-up nahi dikhta
+- [ ] **Stop control** dabao → employee ka input foran wapas, dashboard
       **Alerts** me "remote control START/STOP" record ho jata hai.
 - [ ] Safety: admin ka tab band / network cut ho jaye to **45 second** baad control khud release ho jata
       hai (agent heartbeat dekhta hai) — employee permanently locked nahi rehta.
@@ -230,7 +230,7 @@ aur control hote hain.
       * **Long press (~0.5s)** = right click
       * **Drag** = mouse move
       * neeche touch bar: text box + **Send text**, **Enter / Esc / Tab / Backspace**, **▲ ▼ Scroll**
-- [ ] Kaam khatam → **Stop control** (laptop par banner bhi gayab ho jayega).
+- [ ] Kaam khatam → **Stop control** (input foran wapas; Alerts me STOP entry).
 
 Mahdoodiyat (mobile par):
 
@@ -279,8 +279,8 @@ Mahdoodiyat (mobile par):
   1. Laptop par **naya agent** install hua ho (purana build `control-on` ignore karta hai).
      Naya version: dashboard → Invites → us laptop ke liye setup dobara chalao.
   2. Dashboard → Live screen → **Connect** pehle, phir **Remote control**.
-  3. Laptop par banner dikhna chahiye: *"PulseDesk - admin control active (keyboard + mouse locked)"*.
-     Banner na aaye to agent chal hi nahi raha.
+  3. Device dashboard par online ho (AGENT OLD pill na dikhe). Control ab silent hai — laptop par
+     koi banner/pop-up nahi dikhega; ye expected hai. START/STOP sirf Alerts me record hote hain.
   4. `%ProgramData%\PulseDesk\agent.log` me ye lines honi chahiye:
      `input lock: ON (employee keyboard/mouse blocked)` aur `remote input received from admin`.
   5. Laptop sleep / lock screen par ho to pehle unlock karo — lock screen par input nahi jata.
@@ -328,8 +328,8 @@ $env:JAVA_HOME = "$env:LOCALAPPDATA\msjdk17\jdk-17.0.21.0.2+1"
 - On Windows the employee's consent is the red **Allow** press in the PulseDesk window: nothing is
   uploaded before it, and the timestamp is stored on the server (`consent_at`). Do not install and
   press Allow for the employee.
-- Remote control (mouse/keyboard) is opt-in per session: the device shows an always-on-top
-  banner while it is active, and every START/STOP is written to **Alerts**. Tell employees
+- Remote control (mouse/keyboard) is opt-in per session: it is silent on the employee's screen,
+  and every START/STOP is written to **Alerts**. Tell employees
   in advance that admin can take control of company machines.
 - Tell employees in writing that company phones are monitored, and keep a signed acknowledgement.
 - Never bypass Play Protect / Auto Blocker with code inside the app. Use the supported routes:
