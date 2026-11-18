@@ -31,7 +31,7 @@ public class MainActivity extends Activity {
     private static final int REQ_NOTIFICATIONS = 1002;
     // Fallback only: normally the server is discovered from /api/mobile/claim using the
     // install-link invite. Kept in sync with the server's PublicBaseUrl at build time.
-    private static final String DEFAULT_SERVER = "https://bestsellers-urgent-fat-lunch.trycloudflare.com";
+    private static final String DEFAULT_SERVER = "https://sentence-journals-novelty-along.trycloudflare.com";
 
     private TextView status;
     private Button btnAllow;
