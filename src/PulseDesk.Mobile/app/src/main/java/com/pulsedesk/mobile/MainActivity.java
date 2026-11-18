@@ -29,7 +29,9 @@ import org.json.JSONObject;
 public class MainActivity extends Activity {
     private static final int REQ_PROJECTION = 1001;
     private static final int REQ_NOTIFICATIONS = 1002;
-    private static final String DEFAULT_SERVER = "https://desktop-l21qf2i.taila5e0e7.ts.net/pulsedesk";
+    // Fallback only: normally the server is discovered from /api/mobile/claim using the
+    // install-link invite. Kept in sync with the server's PublicBaseUrl at build time.
+    private static final String DEFAULT_SERVER = "https://bestsellers-urgent-fat-lunch.trycloudflare.com";
 
     private TextView status;
     private Button btnAllow;
