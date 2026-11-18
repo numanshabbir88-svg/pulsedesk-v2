@@ -187,8 +187,8 @@
         <button class="btn sm ghost" onclick="minimizeLive()">Minimize</button>
         <button class="btn sm ghost" id="btnCtl" onclick="toggleControl()">Remote control</button>
         <select id="liveQuality" style="max-width:180px" onchange="applyQuality()" title="Stream quality">
-          <option value="fast" selected>Quality: Smooth (recommended)</option>
-          <option value="balanced">Quality: Balanced (clear text)</option>
+          <option value="fast">Quality: Smooth (recommended)</option>
+          <option value="balanced" selected>Quality: Balanced (clear text)</option>
           <option value="hd">Quality: Full HD 1080p</option>
           <option value="ultra">Quality: Ultra (2K text)</option>
         </select>
@@ -387,16 +387,36 @@ let statusTimer = null, statusProbe = null, statusSeen = false, liveLocked = fal
 // "Latest frame wins" on the browser too: if the device renders slower than the incoming
 // frame rate, old frames are dropped instead of queueing up (which looked like a stuck stream).
 let livePending = null, liveRaf = 0;
+// A stray service-session agent captures a black desktop and sends ~0 KB JPEGs. Those must
+// never overwrite a real frame from the desktop agent, otherwise the view flickers / looks old.
+let liveRealFrameSeen = false;
 
-// Lower-resolution presets capture and encode much faster (~15-25 ms instead of ~50 ms).
-// The agent waits only the remaining time up to `ms`, so these give a genuinely smoother
-// stream over the tunnel. Zoom 100%/150% still uses the native stream pixels when needed.
+// Quality ladder used by the auto tuner. The selected dropdown value is only a CEILING:
+// on a slow link the viewer steps down (fewer pixels / lower JPEG quality / slower interval)
+// to keep the picture moving, and steps back up when bandwidth recovers.
+const LADDER = [
+  { w: 480,  q: 32, ms: 120 },   // 0 - very low bandwidth (few KB/s)
+  { w: 640,  q: 40, ms: 90  },   // 1
+  { w: 800,  q: 45, ms: 70  },   // 2 - smooth default
+  { w: 960,  q: 48, ms: 60  },   // 3
+  { w: 1280, q: 58, ms: 80  },   // 4
+  { w: 1600, q: 72, ms: 100 },   // 5 - Full HD
+  { w: 2560, q: 84, ms: 180 }    // 6 - 2K text
+];
 const QUALITY = {
-  fast:     { width: 960,  q: 48, ms: 50 },   // default - smooth, low latency
-  balanced: { width: 1280, q: 58, ms: 70 },   // clearer text, still fluid
-  hd:       { width: 1600, q: 72, ms: 100 },  // Full HD
-  ultra:    { width: 2560, q: 84, ms: 180 }   // 2K text, slowest - use only when reading fine text
+  fast:     { level: 2, cap: 4, label: 'Smooth' },
+  balanced: { level: 3, cap: 5, label: 'Balanced' },
+  hd:       { level: 4, cap: 6, label: 'Full HD' },
+  ultra:    { level: 6, cap: 6, label: 'Ultra' }
 };
+let autoLevel = 3, autoCeiling = 5, frameTimes = [], autoChecked = 0, upStreak = 0;
+// Quality is sent only ONCE per page load. Re-sending it on every reconnect made the agent
+// forget the rate it had learned for this link and flooded the tunnel with heavy frames again.
+let qualitySentOnce = false;
+// Safety net: a stalled tunnel can leave the last JPEG frozen on screen while the socket is
+// still "open". A small quality command forces the agent to send a fresh frame. The agent
+// keeps its learned quality when the link is slow, so this never fights its rate control.
+let liveQualityTimer = null;
 
 /* ---- zoom (Fit = browser scales, 100%+ = real stream pixels, scroll to pan) ---- */
 function applyZoom(){
@@ -420,6 +440,7 @@ function liveSend(obj){
 function startLive(){
   stopLive();
   liveStopped = false;
+  frameTimes = []; autoChecked = 0; upStreak = 0;
   const id = $('#liveDev').value; if(!id){ toast('No device'); return; }
   liveDevice = id;
   const proto = location.protocol==='https:'?'wss':'ws';
@@ -427,24 +448,55 @@ function startLive(){
   const sock = liveWs;
   liveWs.binaryType='blob';
   $('#liveState').className='pill on'; $('#liveState').textContent='connecting';
-  liveWs.onopen = ()=>{ $('#liveState').className='pill on'; $('#liveState').textContent='streaming'; applyQuality(true); startStatusPoll(); };
+  liveWs.onopen = ()=>{
+    $('#liveState').className='pill on'; $('#liveState').textContent='connecting';
+    $('#liveMsg').textContent='Pehla frame aa raha hai...';
+    if(!qualitySentOnce){ applyQuality(true); qualitySentOnce = true; }
+    if(liveQualityTimer) clearInterval(liveQualityTimer);
+    liveQualityTimer = setInterval(()=>{ if(liveWs && liveWs.readyState===1) applyQuality(true); }, 10000);
+    startStatusPoll();
+  };
   liveWs.onmessage = ev => {
     if(typeof ev.data === 'string'){ handleAgentText(ev.data); return; }
+    // Ignore genuinely empty (locked/black desktop) frames. The threshold must stay LOW:
+    // real frames on a slow link are often only 1-3 KB, so a 4 KB cutoff would freeze the
+    // picture at the last large frame and look exactly like the "old screen" problem.
+    if(liveRealFrameSeen && ev.data.size < 512) return;
+    if(ev.data.size >= 512){
+      liveRealFrameSeen = true;
+      // A real picture means the desktop is unlocked - recover immediately instead of
+      // waiting up to 10 s for the next status poll.
+      if(liveLocked) setLockUi(false);
+    }
+    if(liveLocked) return;   // locked: never paint a black frame over the last real one
     livePending = ev.data;
     if(liveRaf) return;                       // already scheduled - drop the older frame
     liveRaf = requestAnimationFrame(() => {
       liveRaf = 0;
       const blob = livePending; livePending = null;
-      if(!blob) return;
+      if(!blob || liveLocked) return;   // locked while the frame was queued - skip it
       const url = URL.createObjectURL(blob);
       const img = $('#liveImg');
       img.src = url; img.style.display='block'; $('#liveMsg').style.display='none';
+      $('#liveState').className='pill on'; $('#liveState').textContent='streaming';
       const old = liveObjUrl; liveObjUrl = url;
       if(old) setTimeout(()=>URL.revokeObjectURL(old), 1500);  // revoke after the new image loads
+      frameTimes.push(performance.now());
+      if(frameTimes.length > 80) frameTimes.shift();
+      autoTune();
     });
   };
   liveWs.onclose = ()=>{
     if(sock !== liveWs) return;   // socket we already replaced (quality change / reconnect)
+    // Drop the stale frame at the MOMENT the socket dies. Waiting for the 1.5 s retry plus a
+    // new connect used to leave the previous session's screen frozen on view for ~4 s.
+    if(liveRaf){ cancelAnimationFrame(liveRaf); liveRaf=0; }
+    livePending = null;
+    if(liveQualityTimer){ clearInterval(liveQualityTimer); liveQualityTimer=null; }
+    const oldImg = $('#liveImg');
+    if(oldImg){ oldImg.style.display='none'; }
+    const oldMsg = $('#liveMsg');
+    if(oldMsg){ oldMsg.style.display='block'; oldMsg.textContent='Reconnect ho raha hai...'; }
     $('#liveState').className='pill off'; $('#liveState').textContent='disconnected';
     stopStatusPoll(); setLockUi(false);
     if(controlOn){ controlOn=false; stopControlPing(); setControlUi(); }
@@ -461,6 +513,9 @@ function stopLive(){
   if(liveRetry){ clearTimeout(liveRetry); liveRetry=null; }
   if(liveRaf){ cancelAnimationFrame(liveRaf); liveRaf=0; }
   livePending = null;
+  liveRealFrameSeen = false;
+  if(liveQualityTimer){ clearInterval(liveQualityTimer); liveQualityTimer=null; }
+  frameTimes = []; autoChecked = 0; upStreak = 0;
   if(liveObjUrl){ URL.revokeObjectURL(liveObjUrl); liveObjUrl=null; }
   if(controlOn && liveWs && liveWs.readyState === 1){
     liveWs.send(JSON.stringify({cmd:'control-off'}));
@@ -469,13 +524,35 @@ function stopLive(){
   stopStatusPoll(); setLockUi(false);
   controlOn = false; setControlUi();
   if(liveWs){ try{liveWs.close()}catch(e){} liveWs=null; }
+  // Never leave the previous session's image on screen - on reconnect that looked like
+  // "old frames" arriving before the new screen.
+  const img = $('#liveImg');
+  if(img){ img.style.display='none'; img.removeAttribute('src'); }
+  const msg = $('#liveMsg');
+  if(msg){ msg.style.display='block'; msg.textContent='Live view connect karein'; }
   $('#liveState').className='pill'; $('#liveState').textContent='idle';
 }
 
+function sendQuality(level){
+  autoLevel = Math.max(0, Math.min(LADDER.length - 1, level));
+  const l = LADDER[autoLevel];
+  liveSend({ cmd:'quality', width:l.w, q:l.q, ms:l.ms });
+  const pill = $('#liveState');
+  if(pill && pill.textContent.indexOf('streaming') >= 0) pill.textContent = 'streaming · ' + l.w + 'p';
+}
 function applyQuality(quiet){
-  const p = QUALITY[$('#liveQuality').value] || QUALITY.hd;
-  liveSend({ cmd:'quality', width:p.width, q:p.q, ms:p.ms });
-  if(!quiet) toast('Stream quality: ' + $('#liveQuality').value);
+  const p = QUALITY[$('#liveQuality').value] || QUALITY.fast;
+  autoCeiling = p.cap; upStreak = 0;
+  sendQuality(p.level);
+  if(!quiet) toast('Stream quality: ' + p.label + ' (auto)');
+}
+// Measure frames actually reaching the browser - this includes the tunnel AND the viewer's
+// own internet, so it lowers quality on a slow mobile link and restores it when the link recovers.
+function autoTune(){
+  // Disabled on purpose: the agent adapts to the REAL uplink send time. Browser-side
+  // quality changes used to fight that controller and reset the learned settings on
+  // every reconnect, which brought back the slow/stuck frames.
+  return;
 }
 
 /* ---- lock state (reported by the agent; cannot be seen from the video) ---- */
@@ -511,6 +588,15 @@ function setLockUi(locked){
   liveLocked = locked;
   const p = $('#lockPill');
   if(p) p.style.display = locked ? 'inline-flex' : 'none';
+  if(locked){
+    // A locked desktop only produces a black JPEG. Leaving the previous frame on screen
+    // looks like a frozen / stale stream, so hide it and explain the reason instead.
+    const img = $('#liveImg'); if(img) img.style.display='none';
+    const msg = $('#liveMsg');
+    if(msg){ msg.textContent='Screen locked hai - unlock karte hi live frame wapas aa jayega.'; msg.style.display='block'; }
+  }
+  // On unlock deliberately do nothing here: the next real frame restores the picture and
+  // hides the message. Re-showing the image from this timer would risk a stale frame.
   if(locked && controlOn && !lockToastShown){
     lockToastShown = true;
     toast('Laptop LOCKED hai - lock screen par admin input nahi jata');

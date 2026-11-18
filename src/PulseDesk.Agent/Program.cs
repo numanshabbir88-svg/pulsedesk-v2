@@ -63,6 +63,11 @@ internal static class Program
 
     private static int RunCollector(string[] args)
     {
+        // Session 0 (services) has NO interactive desktop. CopyFromScreen there returns a
+        // black/stale surface, and two agents both streaming made the admin view show old
+        // frames. Only the logged-in user's session may run the collector.
+        if (Process.GetCurrentProcess().SessionId == 0) return 0;
+
         // DPI mode is set once at the top of Main (before any window exists).
         // One agent per user session - avoids double samples when both startup + manual run happen.
         // PDS_TEST lets a diagnostic copy run alongside the installed agent without UAC.

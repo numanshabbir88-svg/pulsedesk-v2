@@ -4,7 +4,7 @@
 // never cached. All URLs are relative to this file, so the console also works when it is
 // served from a sub-path (e.g. /pulsedesk/).
 const SHELL = ['index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
-const CACHE = 'pulsedesk-shell-v1';
+const CACHE = 'pulsedesk-shell-v5';
 
 self.addEventListener('install', event => {
   event.waitUntil(

@@ -718,7 +718,7 @@ app.Map("/ws/agent", async (HttpContext ctx) =>
             if (frame.Length == 0 && res.EndOfMessage)
             {
                 if (isText) live.FanoutText(did, Encoding.UTF8.GetString(buf, 0, res.Count));
-                else live.FanoutFrame(did, buf, res.Count);
+                else { live.ObserveAgentFrame(did, ws, res.Count); live.FanoutFrame(did, buf, res.Count); }
                 continue;
             }
 
@@ -728,7 +728,7 @@ app.Map("/ws/agent", async (HttpContext ctx) =>
             var payload = frame.GetBuffer();
             var len = (int)frame.Length;
             if (isText) live.FanoutText(did, Encoding.UTF8.GetString(payload, 0, len));
-            else live.FanoutFrame(did, payload, len);
+            else { live.ObserveAgentFrame(did, ws, len); live.FanoutFrame(did, payload, len); }
             frame.SetLength(0);
         }
     }

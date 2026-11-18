@@ -41,6 +41,19 @@ public sealed class Collector : BackgroundService
     private volatile int _liveWidth = 1600;
     private volatile int _liveQuality = 72;
     private volatile int _liveIntervalMs = 90;
+    // A newly connected viewer (or a quality change) needs a frame immediately instead of
+    // waiting for the next capture tick - that removes the 4-5 s "connect" delay.
+    private volatile bool _forceFrame;
+
+    // Adaptive live rate control. SendAsync blocks when the uplink/tunnel is slow; we watch
+    // the real send time every 12 frames and shrink the stream until frames flow again, then
+    // slowly grow it back toward the quality the admin selected.
+    private int _targetWidth = 1600, _targetQuality = 72, _targetInterval = 90;
+    private int _adaptFrames, _settleFrames;
+    private long _adaptSendMs, _adaptBytes;
+    private long _lastSendMs;
+    private bool _liveStarted;
+    private int _slowFrames;    // blocked frames in the current 6-frame window
 
     // Rolling per-frame costs, logged every 30 frames ("live perf" in agent.log).
     private int _perfFrames;
@@ -293,14 +306,15 @@ public sealed class Collector : BackgroundService
     }
 
     /// <summary>
-    /// Cheap fingerprint of a frame (48x27 sampled pixels). Identical fingerprints mean the
+    /// Cheap fingerprint of a frame (96x54 sampled pixels). Identical fingerprints mean the
     /// screen did not change, so the frame is skipped entirely - this keeps live streaming
-    /// light on idle desktops and leaves the CPU free to encode real motion.
+    /// light on idle desktops and leaves the CPU free to encode real motion. The denser grid
+    /// catches small changes (mouse pointer, typing) that a 48x27 grid used to miss.
     /// </summary>
     private static ulong SampleHash(Bitmap bmp)
     {
         ulong h = 1469598103934665603UL;   // FNV-1a
-        const int cols = 48, rows = 27;
+        const int cols = 96, rows = 54;
         int dx = Math.Max(1, bmp.Width / cols), dy = Math.Max(1, bmp.Height / rows);
         for (int y = 0; y < bmp.Height; y += dy)
         {
@@ -391,6 +405,50 @@ public sealed class Collector : BackgroundService
         return v.Width > 0 ? v : new Rectangle(0, 0, 1920, 1080);
     }
 
+    /// <summary>
+    /// Keeps the stream within the available uplink. A slow link shows up as a long SendAsync
+    /// time; we then lower resolution/quality and slow the frame rate until it recovers.
+    /// Never touches remote control - that keeps its own fixed low-latency preset.
+    /// </summary>
+    private void AdaptLive()
+    {
+        if (_controlOn) return;
+        // Adapt on a 6-frame window using a ROBUST signal: how many frames actually blocked.
+        // A Cloudflare quick tunnel has random 300 ms - 2 s stalls even when the link is fine;
+        // averaging send times (or reacting to a single frame) let one hiccup destroy the
+        // picture. Requiring 3 of 6 blocked frames ignores those random spikes.
+        if (_adaptFrames < 6) return;
+        int slow = _slowFrames;
+        long avgSend = _adaptSendMs / _adaptFrames;
+        _adaptFrames = 0; _adaptSendMs = 0; _adaptBytes = 0; _slowFrames = 0;
+
+        int oldW = _liveWidth, oldQ = _liveQuality, oldMs = _liveIntervalMs;
+        if (slow >= 3 || avgSend > 250)
+        {
+            // Congestion: give the tunnel more breathing room between frames. JPEG quality is
+            // NEVER lowered here - blurry/garbled text was the whole complaint. Width only
+            // drops as a last resort, and never below 640 px (still readable on a laptop).
+            _settleFrames = 0;
+            if (_liveIntervalMs < 300) _liveIntervalMs = Math.Min(300, _liveIntervalMs + 40);
+            else if (_liveWidth > 640) _liveWidth = Math.Max(640, (int)(_liveWidth * 0.9));
+        }
+        else if (slow <= 1 && avgSend < 60)
+        {
+            // Healthy window: heal quickly so a brief stall does not leave quality low.
+            if (++_settleFrames >= 2)
+            {
+                _settleFrames = 0;
+                if (_liveWidth < _targetWidth) _liveWidth = Math.Min(_targetWidth, (int)(_liveWidth * 1.12) + 1);
+                else if (_liveQuality < _targetQuality) _liveQuality = Math.Min(_targetQuality, _liveQuality + 4);
+                else if (_liveIntervalMs > _targetInterval) _liveIntervalMs = Math.Max(_targetInterval, _liveIntervalMs - 25);
+            }
+        }
+        else _settleFrames = 0;
+
+        if (_liveWidth != oldW || _liveQuality != oldQ || _liveIntervalMs != oldMs)
+            Settings.Log($"live adapt: send={avgSend}ms slow={slow}/6 -> {_liveWidth}x{_liveQuality} @{_liveIntervalMs}ms");
+    }
+
     private async Task LiveLoop(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -401,6 +459,11 @@ public sealed class Collector : BackgroundService
                 {
                     var sw = Stopwatch.StartNew();
                     var ws = _ws;
+                    bool force = _forceFrame;
+                    _forceFrame = false;
+                    // Skip truly unchanged screens: on a slow uplink, sending idle frames
+                    // saturates the tunnel and makes real motion laggy. The hash samples
+                    // 96x54 points, so small movements (cursor, typing) still get through.
                     var bytes = CaptureJpeg(_liveWidth, _liveQuality, true);
                     long captureMs = sw.ElapsedMilliseconds;
                     long sendMs = 0;
@@ -420,6 +483,13 @@ public sealed class Collector : BackgroundService
                     _perfCaptureMs += captureMs;
                     _perfSendMs += sendMs;
                     _perfBytes += bytes?.Length ?? 0;
+                    if (bytes != null)
+                    {
+                        _lastSendMs = sendMs;
+                        _adaptFrames++; _adaptSendMs += sendMs; _adaptBytes += bytes.Length;
+                        if (sendMs > 100) _slowFrames++;
+                        AdaptLive();
+                    }
                     if (_perfFrames >= 30)
                     {
                         Settings.Log($"live perf: capture {_perfCaptureMs / _perfFrames} ms, " +
@@ -430,10 +500,10 @@ public sealed class Collector : BackgroundService
                     }
 
                     // Keep the requested frame rate: wait only for the time capture+send did not use.
-                    var wait = _liveIntervalMs - (int)sw.ElapsedMilliseconds;
+                    var wait = force ? 0 : _liveIntervalMs - (int)sw.ElapsedMilliseconds;
                     await Task.Delay(Math.Max(10, wait), ct);
                 }
-                else await Task.Delay(500, ct);
+                else await Task.Delay(120, ct);   // was 500 ms - first frame after connect arrives sooner
             }
             catch { await Task.Delay(1000, ct); }
         }
@@ -502,7 +572,7 @@ public sealed class Collector : BackgroundService
             {
                 case "stream":
                     _streamOn = j.TryGetProperty("on", out var on) && on.GetBoolean();
-                    if (_streamOn) _hashValid = false;   // a new viewer always gets a first frame
+                    if (_streamOn) { _hashValid = false; _forceFrame = true; }  // first frame now
                     break;
                 case "pause":
                     _s.Paused = true; _s.Save();
@@ -519,12 +589,24 @@ public sealed class Collector : BackgroundService
                 // ---- live quality (admin can pick Full HD 1080p / Ultra / Balanced / Fast)
                 case "quality":
                     if (j.TryGetProperty("width", out var w) && w.TryGetInt32(out var wv))
-                        _liveWidth = Math.Clamp(wv, 480, 3840);
+                        _targetWidth = Math.Clamp(wv, 320, 3840);
                     if (j.TryGetProperty("q", out var q) && q.TryGetInt32(out var qv))
-                        _liveQuality = Math.Clamp(qv, 20, 95);
+                        _targetQuality = Math.Clamp(qv, 20, 95);
                     if (j.TryGetProperty("ms", out var m) && m.TryGetInt32(out var mv))
-                        _liveIntervalMs = Math.Clamp(mv, 40, 2000);
+                        _targetInterval = Math.Clamp(mv, 40, 2000);
+                    // A reconnect sends this command again. Keep the settings we already
+                    // learned for this link instead of jumping back to a heavy preset.
+                    if (!_liveStarted || _lastSendMs < 25)
+                    {
+                        _liveWidth = _targetWidth;
+                        _liveQuality = _targetQuality;
+                        _liveIntervalMs = _targetInterval;
+                        _liveStarted = true;
+                    }
+                    _adaptFrames = 0; _adaptSendMs = 0; _adaptBytes = 0; _settleFrames = 0;
+                    _slowFrames = 0;
                     _hashValid = false;   // quality change must produce a fresh frame
+                    _forceFrame = true;
                     break;
 
                 // ---- remote control (mouse + keyboard) ----

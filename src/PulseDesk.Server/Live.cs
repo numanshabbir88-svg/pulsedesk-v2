@@ -80,12 +80,40 @@ public sealed class Live
 
     private readonly ConcurrentDictionary<string, WebSocket> _agents = new();
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<WebSocket, Viewer>> _viewers = new();
+    // A machine can briefly have two agents connected (e.g. an orphaned service-session copy
+    // alongside the real desktop agent). The service one only ever captures a black desktop,
+    // so it sends ~0 KB JPEGs. Remember the largest frame each socket produced and let a real
+    // frame take over streaming - that way a stale copy can never show old/black pictures.
+    private readonly ConcurrentDictionary<WebSocket, int> _agentFrameBytes = new();
 
-    public void AddAgent(string id, WebSocket ws) => _agents[id] = ws;
+    public void AddAgent(string id, WebSocket ws)
+    {
+        _agentFrameBytes[ws] = 0;
+        _agents[id] = ws;   // newest connection starts active; a real frame can switch it below
+    }
 
     public void RemoveAgent(string id, WebSocket ws)
     {
-        if (_agents.TryGetValue(id, out var cur) && ReferenceEquals(cur, ws)) _agents.TryRemove(id, out _);
+        _agentFrameBytes.TryRemove(ws, out _);
+        if (!_agents.TryGetValue(id, out var cur) || !ReferenceEquals(cur, ws)) return;
+        WebSocket? best = null; int bestBytes = 0;
+        foreach (var pair in _agentFrameBytes)
+        {
+            if (pair.Key.State == WebSocketState.Open && pair.Value > bestBytes)
+            { best = pair.Key; bestBytes = pair.Value; }
+        }
+        if (best != null) _agents[id] = best;
+        else _agents.TryRemove(id, out _);
+    }
+
+    /// <summary>Called for every agent frame so the live socket follows the real desktop.</summary>
+    public void ObserveAgentFrame(string id, WebSocket ws, int count)
+    {
+        if (count <= 1024) return;   // black / unchanged frames must not win
+        _agentFrameBytes[ws] = count;
+        if (!_agents.TryGetValue(id, out var cur) || ReferenceEquals(cur, ws)) return;
+        _agentFrameBytes.TryGetValue(cur, out var curBytes);
+        if (curBytes <= 1024) _agents[id] = ws;
     }
 
     public void AddViewer(string id, WebSocket ws) =>
