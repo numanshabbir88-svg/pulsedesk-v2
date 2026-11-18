@@ -187,10 +187,10 @@
         <button class="btn sm ghost" onclick="minimizeLive()">Minimize</button>
         <button class="btn sm ghost" id="btnCtl" onclick="toggleControl()">Remote control</button>
         <select id="liveQuality" style="max-width:180px" onchange="applyQuality()" title="Stream quality">
-          <option value="hd" selected>Quality: Full HD 1080p</option>
+          <option value="fast" selected>Quality: Smooth (recommended)</option>
+          <option value="balanced">Quality: Balanced (clear text)</option>
+          <option value="hd">Quality: Full HD 1080p</option>
           <option value="ultra">Quality: Ultra (2K text)</option>
-          <option value="balanced">Quality: Balanced</option>
-          <option value="fast">Quality: Fast (low latency)</option>
         </select>
         <select id="liveZoom" style="max-width:130px" onchange="applyZoom()" title="Zoom (text parhne ke liye)">
           <option value="0" selected>Zoom: Fit</option>
@@ -384,12 +384,18 @@ async function cmd(deviceId, command){
 let controlOn = false, liveDevice = '', lastMoveSent = 0;
 let liveStopped = false, liveRetry = null;
 let statusTimer = null, statusProbe = null, statusSeen = false, liveLocked = false, lockToastShown = false;
+// "Latest frame wins" on the browser too: if the device renders slower than the incoming
+// frame rate, old frames are dropped instead of queueing up (which looked like a stuck stream).
+let livePending = null, liveRaf = 0;
 
+// Lower-resolution presets capture and encode much faster (~15-25 ms instead of ~50 ms).
+// The agent waits only the remaining time up to `ms`, so these give a genuinely smoother
+// stream over the tunnel. Zoom 100%/150% still uses the native stream pixels when needed.
 const QUALITY = {
-  hd:       { width: 1920, q: 76, ms: 100 },
-  ultra:    { width: 2560, q: 84, ms: 180 },
-  balanced: { width: 1600, q: 66, ms: 60 },
-  fast:     { width: 1920, q: 50, ms: 40 }
+  fast:     { width: 960,  q: 48, ms: 50 },   // default - smooth, low latency
+  balanced: { width: 1280, q: 58, ms: 70 },   // clearer text, still fluid
+  hd:       { width: 1600, q: 72, ms: 100 },  // Full HD
+  ultra:    { width: 2560, q: 84, ms: 180 }   // 2K text, slowest - use only when reading fine text
 };
 
 /* ---- zoom (Fit = browser scales, 100%+ = real stream pixels, scroll to pan) ---- */
@@ -424,9 +430,18 @@ function startLive(){
   liveWs.onopen = ()=>{ $('#liveState').className='pill on'; $('#liveState').textContent='streaming'; applyQuality(true); startStatusPoll(); };
   liveWs.onmessage = ev => {
     if(typeof ev.data === 'string'){ handleAgentText(ev.data); return; }
-    if(liveObjUrl) URL.revokeObjectURL(liveObjUrl);
-    liveObjUrl = URL.createObjectURL(ev.data);
-    const img=$('#liveImg'); img.src=liveObjUrl; img.style.display='block'; $('#liveMsg').style.display='none';
+    livePending = ev.data;
+    if(liveRaf) return;                       // already scheduled - drop the older frame
+    liveRaf = requestAnimationFrame(() => {
+      liveRaf = 0;
+      const blob = livePending; livePending = null;
+      if(!blob) return;
+      const url = URL.createObjectURL(blob);
+      const img = $('#liveImg');
+      img.src = url; img.style.display='block'; $('#liveMsg').style.display='none';
+      const old = liveObjUrl; liveObjUrl = url;
+      if(old) setTimeout(()=>URL.revokeObjectURL(old), 1500);  // revoke after the new image loads
+    });
   };
   liveWs.onclose = ()=>{
     if(sock !== liveWs) return;   // socket we already replaced (quality change / reconnect)
@@ -444,6 +459,9 @@ function startLive(){
 function stopLive(){
   liveStopped = true;
   if(liveRetry){ clearTimeout(liveRetry); liveRetry=null; }
+  if(liveRaf){ cancelAnimationFrame(liveRaf); liveRaf=0; }
+  livePending = null;
+  if(liveObjUrl){ URL.revokeObjectURL(liveObjUrl); liveObjUrl=null; }
   if(controlOn && liveWs && liveWs.readyState === 1){
     liveWs.send(JSON.stringify({cmd:'control-off'}));
   }
