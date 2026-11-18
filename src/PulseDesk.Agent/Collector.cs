@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
@@ -313,21 +314,60 @@ public sealed class Collector : BackgroundService
     /// light on idle desktops and leaves the CPU free to encode real motion. The denser grid
     /// catches small changes (mouse pointer, typing) that a 48x27 grid used to miss.
     /// </summary>
+    private static byte[] _hashPixels = Array.Empty<byte>();
+
     private static ulong SampleHash(Bitmap bmp)
     {
         ulong h = 1469598103934665603UL;   // FNV-1a
         const int cols = 96, rows = 54;
         int dx = Math.Max(1, bmp.Width / cols), dy = Math.Max(1, bmp.Height / rows);
-        for (int y = 0; y < bmp.Height; y += dy)
+
+        // GetPixel() costs ~5-10 us per call; 96x54 samples added 30-60 ms to EVERY frame and
+        // directly showed up as lag when the employee switched windows. Read the bitmap bits
+        // once with LockBits instead - same fingerprint, a fraction of the CPU time.
+        BitmapData? data = null;
+        try { data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, bmp.PixelFormat); }
+        catch { }
+
+        if (data == null || Image.GetPixelFormatSize(data.PixelFormat) < 24)
         {
-            for (int x = 0; x < bmp.Width; x += dx)
+            if (data != null) { try { bmp.UnlockBits(data); } catch { } }
+            for (int y = 0; y < bmp.Height; y += dy)
             {
-                var c = bmp.GetPixel(x, y);
-                h = (h ^ c.R) * 1099511628211UL;
-                h = (h ^ c.G) * 1099511628211UL;
-                h = (h ^ c.B) * 1099511628211UL;
+                for (int x = 0; x < bmp.Width; x += dx)
+                {
+                    var c = bmp.GetPixel(x, y);
+                    h = (h ^ c.R) * 1099511628211UL;
+                    h = (h ^ c.G) * 1099511628211UL;
+                    h = (h ^ c.B) * 1099511628211UL;
+                }
+            }
+            return h;
+        }
+
+        try
+        {
+            int bpp = Math.Max(3, Image.GetPixelFormatSize(data.PixelFormat) / 8);
+            int stride = Math.Abs(data.Stride);
+            int need = stride * bmp.Height;
+            if (_hashPixels.Length < need) _hashPixels = new byte[need];
+            Marshal.Copy(data.Scan0, _hashPixels, 0, need);
+            bool bottomUp = data.Stride < 0;
+
+            for (int y = 0; y < bmp.Height; y += dy)
+            {
+                int row = bottomUp ? bmp.Height - 1 - y : y;
+                int off = row * stride;
+                for (int x = 0; x < bmp.Width; x += dx)
+                {
+                    int i = off + x * bpp;
+                    h = (h ^ _hashPixels[i + 2]) * 1099511628211UL;   // R
+                    h = (h ^ _hashPixels[i + 1]) * 1099511628211UL;   // G
+                    h = (h ^ _hashPixels[i]) * 1099511628211UL;       // B
+                }
             }
         }
+        finally { try { bmp.UnlockBits(data); } catch { } }
         return h;
     }
 
@@ -360,7 +400,14 @@ public sealed class Collector : BackgroundService
                     ok = Native.StretchBlt(memDc, 0, 0, w, h, screenDc, src.Left, src.Top,
                         src.Width, src.Height, Native.SRCCOPY);
                 }
-                if (ok) return Image.FromHbitmap(hbmp);
+                if (ok)
+                {
+                    // FromHbitmap wraps the GDI handle; the finally block below deletes it.
+                    // Clone into a GDI+ owned bitmap first, otherwise LockBits later reads
+                    // freed memory (hard crash) instead of the captured pixels.
+                    using var wrapped = Image.FromHbitmap(hbmp);
+                    return new Bitmap(wrapped);
+                }
             }
         }
         catch { }
@@ -427,12 +474,14 @@ public sealed class Collector : BackgroundService
         int oldW = _liveWidth, oldQ = _liveQuality, oldMs = _liveIntervalMs;
         if (slow >= 3 || avgSend > 250)
         {
-            // Congestion: give the tunnel more breathing room between frames. JPEG quality is
-            // NEVER lowered here - blurry/garbled text was the whole complaint. Width only
-            // drops as a last resort, and never below 640 px (still readable on a laptop).
+            // Congestion: keep the frame CLOCK fast - sleeping 300 ms between frames is exactly
+            // what makes a window switch appear a second late on the admin tool. Cap the pause
+            // at 120 ms, then shrink the picture/quality instead (smaller frames clear faster).
+            // Width never drops below 640 px, quality never below 35, so text stays readable.
             _settleFrames = 0;
-            if (_liveIntervalMs < 300) _liveIntervalMs = Math.Min(300, _liveIntervalMs + 40);
+            if (_liveIntervalMs < 120) _liveIntervalMs = Math.Min(120, _liveIntervalMs + 25);
             else if (_liveWidth > 640) _liveWidth = Math.Max(640, (int)(_liveWidth * 0.9));
+            else if (_liveQuality > 35) _liveQuality = Math.Max(35, _liveQuality - 4);
         }
         else if (slow <= 1 && avgSend < 60)
         {
