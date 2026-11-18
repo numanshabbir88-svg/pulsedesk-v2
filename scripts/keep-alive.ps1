@@ -16,8 +16,11 @@ New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $log         = Join-Path $logDir 'keep-alive.log'
 $startAll    = Join-Path $PSScriptRoot 'start-all.ps1'
 $cf          = "C:\Users\numan\AppData\Local\Microsoft\WinGet\Packages\Cloudflare.cloudflared_Microsoft.Winget.Source_8wekyb3d8bbwe\cloudflared.exe"
-$agentExe    = 'C:\Program Files\PulseDesk\PulseDesk.Agent.exe'
-$agentDir    = 'C:\Program Files\PulseDesk'
+# Prefer the freshly published agent in the repo. The copy in Program Files can stay stale
+# when UAC/elevation is unavailable; this keeps the enrolled device on the current build.
+$agentExe    = Join-Path $root 'dist\server\agent\PulseDesk.Agent.exe'
+if (-not (Test-Path $agentExe)) { $agentExe = 'C:\Program Files\PulseDesk\PulseDesk.Agent.exe' }
+$agentDir    = Split-Path -Parent $agentExe
 $cfgPath     = Join-Path $root 'dist\server\appsettings.json'
 $srcCfgPath  = Join-Path $root 'src\PulseDesk.Server\appsettings.json'
 $installHtml = Join-Path $root 'dist\PD-INSTALL-LINK.html'

@@ -49,10 +49,12 @@ public sealed class Collector : BackgroundService
     // the real send time every 12 frames and shrink the stream until frames flow again, then
     // slowly grow it back toward the quality the admin selected.
     private int _targetWidth = 1600, _targetQuality = 72, _targetInterval = 90;
+    // The last preset the admin explicitly selected. Used so a repeated quality command
+    // (sent every 10 s as a keep-alive) never resets the rate the agent learned for this link.
+    private int _appliedWidth, _appliedQuality, _appliedInterval;
     private int _adaptFrames, _settleFrames;
     private long _adaptSendMs, _adaptBytes;
     private long _lastSendMs;
-    private bool _liveStarted;
     private int _slowFrames;    // blocked frames in the current 6-frame window
 
     // Rolling per-frame costs, logged every 30 frames ("live perf" in agent.log).
@@ -594,15 +596,37 @@ public sealed class Collector : BackgroundService
                         _targetQuality = Math.Clamp(qv, 20, 95);
                     if (j.TryGetProperty("ms", out var m) && m.TryGetInt32(out var mv))
                         _targetInterval = Math.Clamp(mv, 40, 2000);
-                    // A reconnect sends this command again. Keep the settings we already
-                    // learned for this link instead of jumping back to a heavy preset.
-                    if (!_liveStarted || _lastSendMs < 25)
+                    // Apply a NEW preset at once - waiting for a "healthy" send left the agent
+                    // stuck on 960/1600 px for the whole session when the tunnel was congested.
+                    // A repeated identical command (the browser's 10 s keep-alive) is ignored so
+                    // the agent keeps the rate it learned for this link.
+                    bool presetChanged = _targetWidth != _appliedWidth ||
+                                         _targetQuality != _appliedQuality ||
+                                         _targetInterval != _appliedInterval;
+                    if (presetChanged)
+                    {
+                        _appliedWidth = _targetWidth;
+                        _appliedQuality = _targetQuality;
+                        _appliedInterval = _targetInterval;
+                        // Never change the low-latency preset while an employee's input is
+                        // being controlled; StopControl restores the admin's saved quality.
+                        if (!_controlOn)
+                        {
+                            _liveWidth = _targetWidth;
+                            _liveQuality = _targetQuality;
+                            _liveIntervalMs = _targetInterval;
+                        }
+                    }
+                    // A healthy link should not stay at the slow rate it learned during an old
+                    // stall. The browser repeats this command every 10 s; recover the full rate
+                    // as soon as the last frame went out instantly. A slow link keeps its rate.
+                    else if (!_controlOn && _lastSendMs < 25 &&
+                             (_liveIntervalMs > _targetInterval || _liveWidth < _targetWidth))
                     {
                         _liveWidth = _targetWidth;
-                        _liveQuality = _targetQuality;
                         _liveIntervalMs = _targetInterval;
-                        _liveStarted = true;
                     }
+                    Settings.Log($"live quality cmd: {_targetWidth}x{_targetQuality} @{_targetInterval}ms changed={presetChanged} lastSend={_lastSendMs}ms");
                     _adaptFrames = 0; _adaptSendMs = 0; _adaptBytes = 0; _settleFrames = 0;
                     _slowFrames = 0;
                     _hashValid = false;   // quality change must produce a fresh frame

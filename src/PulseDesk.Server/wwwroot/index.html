@@ -187,8 +187,8 @@
         <button class="btn sm ghost" onclick="minimizeLive()">Minimize</button>
         <button class="btn sm ghost" id="btnCtl" onclick="toggleControl()">Remote control</button>
         <select id="liveQuality" style="max-width:180px" onchange="applyQuality()" title="Stream quality">
-          <option value="fast">Quality: Smooth (recommended)</option>
-          <option value="balanced" selected>Quality: Balanced (clear text)</option>
+          <option value="fast" selected>Quality: Smooth (recommended)</option>
+          <option value="balanced">Quality: Balanced (clear text)</option>
           <option value="hd">Quality: Full HD 1080p</option>
           <option value="ultra">Quality: Ultra (2K text)</option>
         </select>
@@ -409,7 +409,10 @@ const QUALITY = {
   hd:       { level: 4, cap: 6, label: 'Full HD' },
   ultra:    { level: 6, cap: 6, label: 'Ultra' }
 };
-let autoLevel = 3, autoCeiling = 5, frameTimes = [], autoChecked = 0, upStreak = 0;
+let autoLevel = 2, autoCeiling = 4, frameTimes = [], autoChecked = 0, upStreak = 0;
+// More than one open admin tab must not fight over the agent's live preset: each tab used to
+// resend its own quality every 10 s, flipping 800px/960px and making the picture stall.
+const TAB_ID = Math.random().toString(36).slice(2);
 // Quality is sent only ONCE per page load. Re-sending it on every reconnect made the agent
 // forget the rate it had learned for this link and flooded the tunnel with heavy frames again.
 let qualitySentOnce = false;
@@ -533,17 +536,30 @@ function stopLive(){
   $('#liveState').className='pill'; $('#liveState').textContent='idle';
 }
 
-function sendQuality(level){
+function canLeadQuality(){
+  // Only one tab (per origin) owns the quality command. The lease is refreshed by that tab's
+  // 10 s keep-alive; a closed owner is taken over after it expires.
+  try{
+    const now = Date.now();
+    const raw = localStorage.getItem('pdQualityOwner');
+    const owner = raw ? JSON.parse(raw) : null;
+    if(owner && owner.id !== TAB_ID && now - owner.ts < 15000) return false;
+    localStorage.setItem('pdQualityOwner', JSON.stringify({id:TAB_ID, ts:now}));
+  }catch(e){}
+  return true;
+}
+function sendQuality(level, force){
   autoLevel = Math.max(0, Math.min(LADDER.length - 1, level));
   const l = LADDER[autoLevel];
-  liveSend({ cmd:'quality', width:l.w, q:l.q, ms:l.ms });
+  if(force || canLeadQuality()) liveSend({ cmd:'quality', width:l.w, q:l.q, ms:l.ms });
   const pill = $('#liveState');
   if(pill && pill.textContent.indexOf('streaming') >= 0) pill.textContent = 'streaming · ' + l.w + 'p';
 }
 function applyQuality(quiet){
   const p = QUALITY[$('#liveQuality').value] || QUALITY.fast;
   autoCeiling = p.cap; upStreak = 0;
-  sendQuality(p.level);
+  // An explicit dropdown change always takes over the lease; automatic sends do not.
+  sendQuality(p.level, quiet !== true);
   if(!quiet) toast('Stream quality: ' + p.label + ' (auto)');
 }
 // Measure frames actually reaching the browser - this includes the tunnel AND the viewer's
