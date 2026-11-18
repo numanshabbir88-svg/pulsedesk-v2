@@ -690,13 +690,11 @@ public sealed class Collector : BackgroundService
     {
         try
         {
-            var json = JsonSerializer.Serialize(new
-            {
-                cmd = "status",
-                locked = Native.IsScreenLocked(),
-                control = _controlOn,
-                ts = DateTime.UtcNow.ToString("O")
-            });
+            // Hand-built JSON stays trim-safe (no reflection on an anonymous type).
+            var json = "{\"cmd\":\"status\",\"locked\":" +
+                       (Native.IsScreenLocked() ? "true" : "false") +
+                       ",\"control\":" + (_controlOn ? "true" : "false") +
+                       ",\"ts\":\"" + DateTime.UtcNow.ToString("O") + "\"}";
             await SendText(json);
         }
         catch { }

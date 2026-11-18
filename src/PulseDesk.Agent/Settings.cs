@@ -1,6 +1,14 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace PulseDesk.Agent;
+
+// The published agent is trimmed to keep the employee download small. Reflection-based JSON
+// cannot see these types after trimming, so use a source-generated context everywhere.
+[JsonSourceGenerationOptions(WriteIndented = true)]
+[JsonSerializable(typeof(Settings))]
+[JsonSerializable(typeof(EmbeddedConfig.Conf))]
+internal partial class AgentJsonContext : JsonSerializerContext { }
 
 public sealed class Settings
 {
@@ -22,7 +30,7 @@ public sealed class Settings
         try
         {
             if (File.Exists(FilePath))
-                return JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new Settings();
+                return JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath), AgentJsonContext.Default.Settings) ?? new Settings();
         }
         catch { }
         return new Settings();
@@ -31,7 +39,7 @@ public sealed class Settings
     public void Save()
     {
         Directory.CreateDirectory(Dir);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(FilePath, JsonSerializer.Serialize(this, AgentJsonContext.Default.Settings));
     }
 
     public static void Log(string message)
@@ -67,7 +75,7 @@ public static class EmbeddedConfig
             var idx = text.LastIndexOf("PLSDCONF:", StringComparison.Ordinal);
             if (idx < 0) return null;
             var json = text[(idx + "PLSDCONF:".Length)..].Trim('\0', '\r', '\n', ' ');
-            return JsonSerializer.Deserialize<Conf>(json);
+            return JsonSerializer.Deserialize<Conf>(json, AgentJsonContext.Default.Conf);
         }
         catch { return null; }
     }
