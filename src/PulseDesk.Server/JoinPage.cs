@@ -10,7 +10,7 @@ public static class JoinPage
                ua.Contains("ipod") || ua.Contains("mobile") || ua.Contains("windows phone");
     }
 
-    public static string Html(string code, string baseUrl, bool mobile = false)
+    public static string Html(string code, string baseUrl, bool mobile = false, long expectedBytes = 0)
     {
         var safeCode = WebUtility.HtmlEncode(code);
         var dl = $"{baseUrl}/download/{code}";
@@ -29,10 +29,86 @@ public static class JoinPage
      <li><span class='num'>4</span><span>The PulseDesk window opens &mdash; press the red <b>Allow</b> button.</span></li>
    </ol>";
 
+        // Desktop download is chunked in the page itself. A quick tunnel can drop one long 22 MB
+        // transfer near the end; 2 MB Range requests with retry leave a complete, openable .exe.
+        var desktopScript = @"<script>
+(function () {
+  var url = '__DL__';
+  var total = __TOTAL__;
+  var btn = document.getElementById('dlBtn');
+  var status = document.getElementById('dlStatus');
+  if (!btn || !total) return;
+  var parts = [], offset = 0, busy = false;
+  var CHUNK = 2 * 1024 * 1024;
+
+  function human(n) { return (n / 1048576).toFixed(1) + ' MB'; }
+  function say(s) { if (status) status.textContent = s; }
+
+  function save() {
+    var blob = new Blob(parts, { type: 'application/octet-stream' });
+    if (blob.size !== total) {
+      say('File incomplete (' + human(blob.size) + ' / ' + human(total) + '). Click again to resume.');
+      busy = false; btn.disabled = false; btn.textContent = 'Resume download';
+      return;
+    }
+    var a = document.createElement('a');
+    var u = URL.createObjectURL(blob);
+    a.href = u; a.download = 'PulseDeskSetup.exe';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(u); }, 600000);
+    say('Download complete (' + human(total) + '). Ab downloaded file ko double-click karein.');
+    btn.textContent = 'Download again';
+    parts = []; offset = 0; busy = false; btn.disabled = false;
+  }
+
+  function next(attempt) {
+    if (offset >= total) { save(); return; }
+    var end = Math.min(offset + CHUNK - 1, total - 1);
+    say('Downloading ' + human(offset) + ' / ' + human(total) + '...');
+    fetch(url, { headers: { Range: 'bytes=' + offset + '-' + end }, cache: 'no-store' })
+      .then(function (r) {
+        if (r.status !== 206 && r.status !== 200) throw new Error('HTTP ' + r.status);
+        return r.arrayBuffer().then(function (b) { return { r: r, b: b }; });
+      })
+      .then(function (x) {
+        var b = x.b;
+        if (x.r.status === 200 && offset === 0) {
+          parts = [b]; offset = b.byteLength;
+        } else if (x.r.status === 206) {
+          parts.push(b); offset += b.byteLength;
+        } else {
+          throw new Error('Range not supported');
+        }
+        next(0);
+      })
+      .catch(function (e) {
+        attempt = attempt || 0;
+        if (attempt < 6) {
+          say('Connection slow - retry ' + (attempt + 1) + '/6 at ' + human(offset) + '...');
+          setTimeout(function () { next(attempt + 1); }, 600 * (attempt + 1));
+        } else {
+          busy = false; btn.disabled = false; btn.textContent = 'Resume download';
+          say('Download ruk gaya. ""Resume download"" dabaein - yahin se continue hoga.');
+        }
+      });
+  }
+
+  btn.addEventListener('click', function () {
+    if (busy) return;
+    busy = true; btn.disabled = true; btn.textContent = 'Downloading...';
+    next(0);
+  });
+})();
+</script>".Replace("__DL__", dl).Replace("__TOTAL__", expectedBytes.ToString());
+
         var action = mobile
             ? $@"<a class='btn' href='{baseUrl}/mobile/app.apk?c={safeCode}' download='PulseDeskMobile.apk'>Download &amp; Install</a>
    <div class='note'>Android 8 or newer. iPhone and iPad are not supported.</div>"
-            : $@"<a class='btn' href='{dl}' download='PulseDeskSetup.exe'>Download &amp; Install</a>";
+            : $@"<button class='btn' id='dlBtn' type='button'>Download &amp; Install</button>
+    <div id='dlStatus' style='text-align:center;font-size:12px;color:#7fd8cc;margin-top:10px;min-height:18px'>Setup ~{Math.Round(expectedBytes / 1048576.0, 1)} MB. Slow connection par bhi automatically resume hoga.</div>
+    <noscript><a class='btn' href='{dl}' download='PulseDeskSetup.exe'>Download &amp; Install</a></noscript>
+    <div style='text-align:center;margin-top:8px'><a href='{dl}' download='PulseDeskSetup.exe' style='color:#7fd8cc;font-size:11.5px'>Direct download link (agar upar wala button kaam na kare)</a></div>
+    {desktopScript}";
 
         var transparency = mobile
             ? "PulseDesk runs only with your consent. While it is active, screen images and app activity are visible to your company administrator, and an ongoing notification stays visible on this phone. You can stop it at any time from that notification or from the app's Stop shortcut. After a phone restart, open the app once to resume."

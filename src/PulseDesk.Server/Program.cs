@@ -32,6 +32,15 @@ string AgentBundle = cfg["AgentBundlePath"] ?? "agent/PulseDesk.Agent.exe";
 string ShotDir = Path.GetFullPath(cfg["ScreenshotDir"] ?? "data/shots");
 Directory.CreateDirectory(ShotDir);
 
+// Exact size of the installer this invite generates (exe + embedded invite marker). The join
+// page uses it to verify a chunked download before offering the file to Windows.
+long BundleSize(string code)
+{
+    var conf = JsonSerializer.Serialize(new { code, server = PublicBase });
+    var marker = Encoding.UTF8.GetBytes("\nPLSDCONF:" + conf);
+    return (File.Exists(AgentBundle) ? new FileInfo(AgentBundle).Length : 0) + marker.Length;
+}
+
 // ---------------------------------------------------------------- retention (keeps admin disk free)
 int retainActivity = int.TryParse(cfg["RetentionDaysActivity"], out var ra) ? ra : 30;
 int retainShots = int.TryParse(cfg["RetentionDaysShots"], out var rsh) ? rsh : 7;
@@ -658,10 +667,10 @@ app.MapGet("/join/{code}", (HttpContext ctx, string code) =>
         }
     }
 
-    return Results.Content(JoinPage.Html(code, PublicBase, JoinPage.IsMobile(ua)), "text/html");
+    return Results.Content(JoinPage.Html(code, PublicBase, JoinPage.IsMobile(ua), BundleSize(code)), "text/html");
 });
 
-app.MapGet("/download/{code}", (string code) =>
+app.MapGet("/download/{code}", (HttpContext ctx, string code) =>
 {
     using var conn = db.Open();
     var q = conn.CreateCommand();
@@ -674,13 +683,29 @@ app.MapGet("/download/{code}", (string code) =>
     if (!File.Exists(AgentBundle))
         return Results.NotFound("Agent bundle missing on server: " + AgentBundle);
 
-    var bytes = File.ReadAllBytes(AgentBundle);
-    var conf = JsonSerializer.Serialize(new { code, server = PublicBase });
-    var marker = Encoding.UTF8.GetBytes("\nPLSDCONF:" + conf);
-    var outBytes = new byte[bytes.Length + marker.Length];
-    Buffer.BlockCopy(bytes, 0, outBytes, 0, bytes.Length);
-    Buffer.BlockCopy(marker, 0, outBytes, bytes.Length, marker.Length);
-    return Results.File(outBytes, "application/octet-stream", "PulseDeskSetup.exe");
+    // Build the personalised installer ONCE on disk, then serve it as a real file with Range
+    // support. The old code read 22 MB into memory and returned one long response; a quick
+    // tunnel reset near the end left the employee with a truncated .exe that would not open.
+    var downloadDir = Path.GetFullPath(Path.Combine(app.Environment.ContentRootPath, "data", "downloads"));
+    Directory.CreateDirectory(downloadDir);
+    var cached = Path.Combine(downloadDir, code + ".exe");
+    var expected = BundleSize(code);
+    if (!File.Exists(cached) || new FileInfo(cached).Length != expected)
+    {
+        var conf = JsonSerializer.Serialize(new { code, server = PublicBase });
+        var marker = Encoding.UTF8.GetBytes("\nPLSDCONF:" + conf);
+        var temp = cached + ".tmp";
+        using (var input = File.OpenRead(AgentBundle))
+        using (var output = File.Create(temp))
+        {
+            input.CopyTo(output);
+            output.Write(marker);
+        }
+        File.Move(temp, cached, true);
+    }
+
+    ctx.Response.Headers.CacheControl = "no-store";
+    return Results.File(cached, "application/octet-stream", "PulseDeskSetup.exe", enableRangeProcessing: true);
 });
 
 // ---------------------------------------------------------------- realtime
