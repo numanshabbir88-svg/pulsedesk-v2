@@ -82,25 +82,33 @@ public sealed class Live
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<WebSocket, Viewer>> _viewers = new();
     // A machine can briefly have two agents connected (e.g. an orphaned service-session copy
     // alongside the real desktop agent). The service one only ever captures a black desktop,
-    // so it sends ~0 KB JPEGs. Remember the largest frame each socket produced and let a real
-    // frame take over streaming - that way a stale copy can never show old/black pictures.
-    private readonly ConcurrentDictionary<WebSocket, int> _agentFrameBytes = new();
+    // so it sends ~0 KB JPEGs. A stale socket can also stay half-open after a tunnel change:
+    // it still looks "Open" and used to keep the command target even though a new socket was
+    // sending every real frame. Track the LAST real frame time per socket and route commands
+    // to the most recently active one.
+    private readonly ConcurrentDictionary<WebSocket, AgentStat> _agentStats = new();
+
+    private sealed class AgentStat
+    {
+        public int Bytes;
+        public long Last;
+    }
 
     public void AddAgent(string id, WebSocket ws)
     {
-        _agentFrameBytes[ws] = 0;
+        _agentStats[ws] = new AgentStat { Bytes = 0, Last = Environment.TickCount64 };
         _agents[id] = ws;   // newest connection starts active; a real frame can switch it below
     }
 
     public void RemoveAgent(string id, WebSocket ws)
     {
-        _agentFrameBytes.TryRemove(ws, out _);
+        _agentStats.TryRemove(ws, out _);
         if (!_agents.TryGetValue(id, out var cur) || !ReferenceEquals(cur, ws)) return;
-        WebSocket? best = null; int bestBytes = 0;
-        foreach (var pair in _agentFrameBytes)
+        WebSocket? best = null; long bestLast = 0;
+        foreach (var pair in _agentStats)
         {
-            if (pair.Key.State == WebSocketState.Open && pair.Value > bestBytes)
-            { best = pair.Key; bestBytes = pair.Value; }
+            if (pair.Key.State == WebSocketState.Open && pair.Value.Bytes > 1024 && pair.Value.Last > bestLast)
+            { best = pair.Key; bestLast = pair.Value.Last; }
         }
         if (best != null) _agents[id] = best;
         else _agents.TryRemove(id, out _);
@@ -110,10 +118,14 @@ public sealed class Live
     public void ObserveAgentFrame(string id, WebSocket ws, int count)
     {
         if (count <= 1024) return;   // black / unchanged frames must not win
-        _agentFrameBytes[ws] = count;
+        var now = Environment.TickCount64;
+        var stat = _agentStats.GetOrAdd(ws, _ => new AgentStat());
+        stat.Bytes = count;
+        stat.Last = now;
         if (!_agents.TryGetValue(id, out var cur) || ReferenceEquals(cur, ws)) return;
-        _agentFrameBytes.TryGetValue(cur, out var curBytes);
-        if (curBytes <= 1024) _agents[id] = ws;
+        if (!_agentStats.TryGetValue(cur, out var curStat) ||
+            curStat.Bytes <= 1024 || now - curStat.Last > 3000)
+            _agents[id] = ws;
     }
 
     public void AddViewer(string id, WebSocket ws) =>

@@ -32,6 +32,10 @@ $originFile  = Join-Path $logDir 'CURRENT-ORIGIN.txt'   # hidden quick-tunnel up
 $legacyUrl   = Join-Path $logDir 'CURRENT-URL.txt'      # old file: used only to migrate
 $workerDeploy = Join-Path $PSScriptRoot 'deploy-worker.ps1'
 $stableUrl   = 'https://pulsedesk.pulsedesk-numan.workers.dev'   # permanent, never rewritten
+# State for a candidate tunnel whose Worker redeploy has not succeeded yet.
+$script:newTunnelPid  = 0
+$script:pendingOrigin = $null
+$script:pendingPid    = 0
 
 function Log($m) { Add-Content -Path $log -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $m" -Encoding utf8 }
 function Test-Port5081 { try { return [bool](Get-NetTCPConnection -LocalPort 5081 -State Listen -ErrorAction Stop) } catch { return $false } }
@@ -73,8 +77,9 @@ function Start-FixedServer {
 
 function New-QuickTunnel {
     # Returns a NEW https URL only after it actually answers. Never kill the existing tunnel
-    # first: cloudflared's "request quick Tunnel" call can time out, and that used to leave the
-    # whole public URL down with no upstream for the Worker.
+    # here: the Worker must be redeployed FIRST, otherwise a failed deploy leaves the public
+    # URL pointing at a dead upstream. Old tunnels are stopped only after a successful deploy.
+    $script:newTunnelPid = 0
     if (-not (Test-Path $cf)) { Log "  cloudflared missing: $cf"; return $null }
     # Unique filename per attempt: a previous cloudflared from this same loop can still hold
     # tunnel-new-$PID.* open, and Set-Content used to throw "file in use", aborting the heal.
@@ -93,8 +98,7 @@ function New-QuickTunnel {
         if ($txt -match 'https://[a-z0-9]+(?:-[a-z0-9]+)+\.trycloudflare\.com') {
             $candidate = $Matches[0]
             if (Test-UrlAlive $candidate) {
-                Get-Process cloudflared -EA SilentlyContinue |
-                    Where-Object { $_.Id -ne $p.Id } | Stop-Process -Force -EA SilentlyContinue
+                $script:newTunnelPid = $p.Id
                 return $candidate
             }
             Log "  candidate tunnel not answering yet: $candidate"
@@ -112,18 +116,32 @@ function New-QuickTunnel {
 
 function Apply-NewOrigin([string]$newUrl) {
     $old = Get-OriginUrl
-    if (-not $newUrl -or $old -eq $newUrl) { return }
-    Log "  quick origin changed: $old -> $newUrl"
-    [System.IO.File]::WriteAllText($originFile, $newUrl)
-    if (Test-Path $legacyUrl) { [System.IO.File]::WriteAllText($legacyUrl, $newUrl) }
+    if (-not $newUrl) { return $false }
+    if ($old -eq $newUrl) { return $true }
+    Log "  worker redeploy requested: $old -> $newUrl"
+    $deployed = $false
     if (Test-Path $workerDeploy) {
         try {
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $workerDeploy -Origin $newUrl 2>&1 |
-                ForEach-Object { Log "    worker: $_" }
+            $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $workerDeploy -Origin $newUrl 2>&1
+            $out | ForEach-Object { Log "    worker: $_" }
+            $deployed = ($LASTEXITCODE -eq 0 -and (($out | Out-String) -match 'deployed'))
         } catch { Log "    worker redeploy FAIL: $($_.Exception.Message)" }
     } else { Log "    worker deploy script missing: $workerDeploy" }
+    if (-not $deployed) {
+        # Never write CURRENT-ORIGIN before this succeeds: the file is what the next loop trusts.
+        Log "  worker redeploy failed; keeping old origin $old so the public URL stays up"
+        return $false
+    }
+    [System.IO.File]::WriteAllText($originFile, $newUrl)
+    if (Test-Path $legacyUrl) { [System.IO.File]::WriteAllText($legacyUrl, $newUrl) }
+    # Only now can the old upstream tunnels go away: the Worker already serves the new one.
+    $keep = $script:newTunnelPid
+    Get-Process cloudflared -EA SilentlyContinue |
+        Where-Object { $keep -le 0 -or $_.Id -ne $keep } | Stop-Process -Force -EA SilentlyContinue
+    Log "  quick origin changed: $old -> $newUrl (worker deployed, tunnel pid=$keep)"
     # Deliberately NO link/config/shortcut rewrites and NO server restart: the public URL is
     # stable, so nothing except the Worker's hidden ORIGIN changed.
+    return $true
 }
 
 # Only ONE keep-alive loop may touch the tunnel. An orphaned elevated copy used to fight the
@@ -147,6 +165,18 @@ while ($true) {
         # 2) hidden quick-tunnel origin. The Worker keeps the public URL alive, so we watch the
         #    origin directly; when it changes, only the Worker script is redeployed.
         $origin = Get-OriginUrl
+        # A candidate tunnel whose Worker deploy failed is kept alive and retried. Otherwise a
+        # transient Cloudflare API timeout used to strand the Worker on a killed old tunnel.
+        if ($script:pendingOrigin) {
+            Log "retrying pending worker deploy to $script:pendingOrigin"
+            $script:newTunnelPid = $script:pendingPid
+            if (Apply-NewOrigin $script:pendingOrigin) {
+                $script:pendingOrigin = $null; $script:pendingPid = 0
+                $origin = Get-OriginUrl
+            } else {
+                $script:newTunnelPid = $script:pendingPid
+            }
+        }
         if (-not (Get-Process cloudflared -EA SilentlyContinue) -or -not (Test-UrlAlive $origin)) {
             Log "tunnel origin unhealthy (url=$origin) -> creating fresh quick tunnel"
             $newUrl = New-QuickTunnel
@@ -157,8 +187,13 @@ while ($true) {
                     Start-Sleep -Seconds 2
                     if (Test-UrlAlive $newUrl) { $ready = $true; break }
                 }
-                if ($ready) { Apply-NewOrigin $newUrl }
-                else { Log "  new origin not reachable yet; will retry next cycle" }
+                if ($ready) {
+                    if (-not (Apply-NewOrigin $newUrl)) {
+                        $script:pendingOrigin = $newUrl
+                        $script:pendingPid    = $script:newTunnelPid
+                        Log "  worker not switched yet; keeping candidate $newUrl for retry"
+                    }
+                } else { Log "  new origin not reachable yet; will retry next cycle" }
             } else { Log "  failed to create tunnel" }
         }
 

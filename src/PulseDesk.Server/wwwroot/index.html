@@ -381,7 +381,7 @@ async function cmd(deviceId, command){
 }
 
 /* ---------------- live */
-let controlOn = false, liveDevice = '', lastMoveSent = 0;
+let controlOn = false, liveDevice = '', lastMoveSent = 0, controlCmdAt = 0;
 let liveStopped = false, liveRetry = null;
 let statusTimer = null, statusProbe = null, statusSeen = false, liveLocked = false, lockToastShown = false;
 // "Latest frame wins" on the browser too: if the device renders slower than the incoming
@@ -523,6 +523,9 @@ function stopLive(){
   if(controlOn && liveWs && liveWs.readyState === 1){
     liveWs.send(JSON.stringify({cmd:'control-off'}));
   }
+  // WS send can be dropped if the socket closes immediately after. The HTTP command is
+  // acknowledged by the server, so the employee input lock is always released on Stop/leave.
+  if(controlOn && liveDevice) cmd(liveDevice, 'control-off').catch(()=>{});
   stopControlPing();
   stopStatusPoll(); setLockUi(false);
   controlOn = false; setControlUi();
@@ -597,6 +600,15 @@ function handleAgentText(raw){
       statusSeen = true;
       const p = $('#agentPill'); if(p) p.style.display = 'none';
       setLockUi(!!m.locked);
+      // The agent is the source of truth for the employee input lock. If its safety watchdog
+      // released control (no heartbeat / WS drop), the button must not keep saying "Stop
+      // control" while the employee is already unlocked - that desync broke repeat tests.
+      if(typeof m.control === 'boolean' && Date.now() - controlCmdAt > 2000 && m.control !== controlOn){
+        controlOn = m.control;
+        if(controlOn) startControlPing(); else stopControlPing();
+        setControlUi();
+        if(!controlOn) toast('Remote control agent ki taraf se band ho gaya - employee input wapas active');
+      }
     }
   }catch(e){}
 }
@@ -647,6 +659,7 @@ function stopControlPing(){
 async function toggleControl(){
   if(!liveDevice){ toast('Connect a device first'); return; }
   const next = !controlOn;
+  controlCmdAt = Date.now();
   try{
     await cmd(liveDevice, next ? 'control-on' : 'control-off');
     controlOn = next;
