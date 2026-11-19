@@ -102,6 +102,16 @@
   #liveStage:fullscreen #liveMsg{color:#fff}
   #liveHint{color:var(--muted);font-size:12px;margin:10px 0 0}
   #liveStage.control #liveHint{color:#ffb4ae}
+  /* The agent captures with BitBlt, which never includes the OS cursor. Draw the admin's
+     remote pointer here so remote control is visibly working (position matches exactly). */
+  #remoteCursor{position:absolute;display:none;pointer-events:none;z-index:20;
+    width:18px;height:18px;margin:-9px 0 0 -9px;border:2px solid #ff8a7a;border-radius:50%;
+    box-shadow:0 0 0 2px #04100f,0 0 10px rgba(255,138,122,.8)}
+  #remoteCursor::after{content:'';position:absolute;left:7px;top:7px;width:4px;height:4px;
+    background:#fff;border-radius:50%}
+  #remoteCursor b{position:absolute;left:16px;top:14px;font-size:10px;font-weight:600;white-space:nowrap;
+    color:#ffd7d2;background:rgba(4,16,15,.85);padding:1px 5px;border-radius:4px}
+  #inputCount{color:#ffb4ae;font-weight:600}
   .tag{font-size:10.5px;padding:2px 7px;border-radius:5px;background:#123634;color:var(--muted);letter-spacing:.6px}
   .hidden{display:none!important}
 
@@ -210,10 +220,11 @@
       <div id="liveWrap">
         <div id="liveStage" tabindex="0">
           <img id="liveImg" alt="live" draggable="false"/>
+          <div id="remoteCursor"><b>remote</b></div>
           <div id="liveMsg">Live view connect karein</div>
         </div>
       </div>
-      <div id="liveHint">Tip: image par click karein -&gt; full screen. Chhota text parhne ke liye Zoom: 100% ya 150% chunein. Remote control ON hone par aapka mouse/keyboard device par chalta hai.</div>
+      <div id="liveHint">Tip: image par click karein -&gt; full screen. Chhota text parhne ke liye Zoom: 100% ya 150% chunein. Remote control ON hone par aapka mouse/keyboard device par chalta hai. Input bheje gaye: <span id="inputCount">0</span></div>
 
       <!-- phone / tablet remote control -->
       <div id="touchBar">
@@ -443,9 +454,28 @@ function applyZoom(){
 }
 $('#liveImg').addEventListener('load', applyZoom);
 
+let inputSentCount = 0;
 function liveSend(obj){
-  if(liveWs && liveWs.readyState === 1) liveWs.send(JSON.stringify(obj));
+  if(!liveWs || liveWs.readyState !== 1) return;
+  liveWs.send(JSON.stringify(obj));
+  // Visible proof that admin input is actually reaching the agent. BitBlt never captures the
+  // employee's cursor, so without this counter / overlay control looks dead even when it works.
+  if(obj && obj.cmd === 'input'){
+    const el = $('#inputCount');
+    if(el) el.textContent = String(++inputSentCount);
+    if(obj.kind === 'move') showRemoteCursor(obj.x, obj.y);
+  }
 }
+function showRemoteCursor(nx, ny){
+  const cur = $('#remoteCursor'), img = $('#liveImg'), st = $('#liveStage');
+  if(!cur || !img || !st || !controlOn || img.style.display === 'none'){ if(cur) cur.style.display='none'; return; }
+  const r = img.getBoundingClientRect(), s = st.getBoundingClientRect();
+  // Image is object-fit:contain inside the stage; map normalized screen coords onto it.
+  cur.style.left = (r.left - s.left + Math.min(1, Math.max(0, nx)) * r.width) + 'px';
+  cur.style.top  = (r.top  - s.top  + Math.min(1, Math.max(0, ny)) * r.height) + 'px';
+  cur.style.display = 'block';
+}
+function hideRemoteCursor(){ const cur = $('#remoteCursor'); if(cur) cur.style.display='none'; }
 
 function startLive(){
   stopLive();
@@ -545,7 +575,7 @@ function stopLive(){
   if(controlOn && liveDevice) cmd(liveDevice, 'control-off').catch(()=>{});
   stopControlPing();
   stopStatusPoll(); setLockUi(false);
-  controlOn = false; setControlUi();
+  controlOn = false; setControlUi(); hideRemoteCursor();
   if(liveWs){ try{liveWs.close()}catch(e){} liveWs=null; }
   // Never leave the previous session's image on screen - on reconnect that looked like
   // "old frames" arriving before the new screen.
@@ -713,9 +743,10 @@ function setControlUi(){
   }
   const st = $('#liveStage');
   if(st) st.classList.toggle('control', controlOn);
+  if(!controlOn) hideRemoteCursor();
   const h = $('#liveHint');
   if(h) h.textContent = controlOn
-    ? 'Remote control ON - employee ka keyboard/mouse BLOCK hai. Aapke apne shortcuts (Ctrl/Alt/Tab) safe hain. Turant rokne ke liye Ctrl+Shift+Q ya "Stop control".'
+    ? 'Remote control ON - employee ka keyboard/mouse BLOCK hai. Aapka remote cursor image par red circle se dikhega (agent screenshot me OS cursor nahi aata). Shortcuts (Ctrl/Alt/Tab) aapke paas safe hain. Turant rokne ke liye Ctrl+Shift+Q ya "Stop control".'
     : 'Tip: image par click karein -> full screen. Remote control ON hone par aapka mouse/keyboard device par chalta hai.';
 }
 
@@ -734,7 +765,10 @@ $('#liveImg').addEventListener('click', e => {
   if(!controlOn && !document.fullscreenElement) toggleFullscreen();
 });
 $('#liveImg').addEventListener('dblclick', e => { if(fromTouch(e)) return; e.preventDefault(); toggleFullscreen(); });
-$('#liveImg').addEventListener('mousemove', e => {
+// Bind to the whole stage (not just the <img>): in full screen the image is letterboxed, and
+// moving over the black bars used to send nothing even though the user thought control was on.
+const liveStageEl = $('#liveStage');
+liveStageEl.addEventListener('mousemove', e => {
   if(fromTouch(e) || !controlOn) return;
   const now = performance.now();
   if(now - lastMoveSent < 60) return;
@@ -742,24 +776,25 @@ $('#liveImg').addEventListener('mousemove', e => {
   const p = liveNorm(e);
   liveSend({ cmd:'input', kind:'move', x:p.x, y:p.y });
 });
-$('#liveImg').addEventListener('mousedown', e => {
+liveStageEl.addEventListener('mousedown', e => {
   if(fromTouch(e) || !controlOn) return;
   e.preventDefault();
   const p = liveNorm(e);
   liveSend({ cmd:'input', kind:'click', button:liveButton(e), down:true, x:p.x, y:p.y });
 });
-$('#liveImg').addEventListener('mouseup', e => {
+liveStageEl.addEventListener('mouseup', e => {
   if(fromTouch(e) || !controlOn) return;
   e.preventDefault();
   const p = liveNorm(e);
   liveSend({ cmd:'input', kind:'click', button:liveButton(e), down:false, x:p.x, y:p.y });
 });
-$('#liveImg').addEventListener('contextmenu', e => { if(controlOn) e.preventDefault(); });
-$('#liveImg').addEventListener('wheel', e => {
+liveStageEl.addEventListener('contextmenu', e => { if(controlOn) e.preventDefault(); });
+liveStageEl.addEventListener('wheel', e => {
   if(!controlOn) return;
   e.preventDefault();
   liveSend({ cmd:'input', kind:'wheel', delta: e.deltaY > 0 ? -120 : 120 });
 }, { passive:false });
+liveStageEl.addEventListener('mouseleave', hideRemoteCursor);
 
 /* ---- touch remote control (phone / tablet) ----
    Tap = left click, long press = right click, drag = move mouse. */
