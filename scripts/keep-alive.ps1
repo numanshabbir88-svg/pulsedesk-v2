@@ -1,15 +1,18 @@
-# PulseDesk master keep-alive - stable PUBLIC URL + self-healing quick-tunnel origin.
-# Keeps alive: admin server (5081), Cloudflare quick tunnel (private origin), Cloudflare Worker
-# proxy (permanent public URL), enrolled Windows agent (started in the user session by the agent
-# itself, never by this SYSTEM task).
+# PulseDesk keep-alive - stable PUBLIC URL pinned to the fast Tailscale Funnel upstream.
+# Keeps alive: the admin servers (5081 legacy + 5080 Funnel listener), the Cloudflare Worker
+# proxy (permanent public URL), and verifies the enrolled Windows agent is in the user session.
 #
-# IMPORTANT: the public URL is the free workers.dev URL and NEVER changes. The quick tunnel is
-# only a hidden upstream. When the home internet changes and cloudflared gets a new hostname,
-# this script redeploys scripts\worker-proxy.template.js with the new ORIGIN. Links, invites,
-# agent.json, the mobile app and admin shortcuts stay on the stable URL, so employees do not
-# need a new invite and the admin never has to hunt for a new address.
+# IMPORTANT: the public URL is the free workers.dev URL and NEVER changes. Its hidden upstream
+# is the EXISTING Tailscale Funnel route https://desktop-l21qf2i.taila5e0e7.ts.net/pulsedesk
+# -> 127.0.0.1:5080. Cloudflare quick tunnels were tried first but were unusable: every
+# internet/Wi-Fi change gave a new hostname and the edge responses took 15-40 s, which broke
+# live video and remote control. Tailscale Funnel keeps ONE hostname across network changes
+# and answers in ~0.05 s, with no new invite needed by employees.
 #
-# Registered as a SYSTEM scheduled task by install-keepalive.ps1.
+# This script never creates or kills a tunnel and never touches the existing Tailscale/domain
+# configuration - it only makes sure the Worker stays pinned to the Funnel origin.
+#
+# Registered as a SYSTEM scheduled task by install-keepalive.ps1 (if elevation is available).
 param([switch]$Once)   # -Once runs a single self-heal pass (used by the elevated finaliser)
 
 $ErrorActionPreference = 'Continue'
@@ -17,202 +20,135 @@ $root        = Split-Path -Parent $PSScriptRoot
 $logDir      = Join-Path $root 'dist\logs'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $log         = Join-Path $logDir 'keep-alive.log'
-$cf          = "C:\Users\numan\AppData\Local\Microsoft\WinGet\Packages\Cloudflare.cloudflared_Microsoft.Winget.Source_8wekyb3d8bbwe\cloudflared.exe"
-$agentExe    = Join-Path $root 'dist\server\agent\PulseDesk.Agent.exe'
-if (-not (Test-Path $agentExe)) { $agentExe = 'C:\Program Files\PulseDesk\PulseDesk.Agent.exe' }
-$agentDir    = Split-Path -Parent $agentExe
-# FIXED server only: the old dist\server\PulseDesk.Server.exe on 5080 is locked by a stale
-# process and must never be started or killed. The working build is dist\server_new.
-$serverExe   = Join-Path $root 'dist\server_new\PulseDesk.Server.exe'
 $serverDir   = Join-Path $root 'dist\server'
 $cfgPath     = Join-Path $root 'dist\server\appsettings.json'
-$inviteEmail = 'chaudhrynuman69@gmail.com'
-$inviteFile  = Join-Path $logDir 'CURRENT-INVITE.txt'
-$originFile  = Join-Path $logDir 'CURRENT-ORIGIN.txt'   # hidden quick-tunnel upstream
-$legacyUrl   = Join-Path $logDir 'CURRENT-URL.txt'      # old file: used only to migrate
+$legacyExe   = Join-Path $root 'dist\server_new\PulseDesk.Server.exe'   # 5081 legacy build
+$funnelExe   = Join-Path $root 'dist\server\PulseDesk.Server.exe'       # 5080 Funnel listener
+$originFile  = Join-Path $logDir 'CURRENT-ORIGIN.txt'
 $workerDeploy = Join-Path $PSScriptRoot 'deploy-worker.ps1'
-$stableUrl   = 'https://pulsedesk.pulsedesk-numan.workers.dev'   # permanent, never rewritten
-# State for a candidate tunnel whose Worker redeploy has not succeeded yet.
-$script:newTunnelPid  = 0
-$script:pendingOrigin = $null
-$script:pendingPid    = 0
+$stableUrl   = 'https://pulsedesk.pulsedesk-numan.workers.dev'          # permanent, never rewritten
+$funnelOrigin = 'https://desktop-l21qf2i.taila5e0e7.ts.net/pulsedesk'   # fast, stable upstream
+$tsExe       = 'C:\Program Files\Tailscale\tailscale.exe'
 
 function Log($m) { Add-Content -Path $log -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $m" -Encoding utf8 }
-function Test-Port5081 { try { return [bool](Get-NetTCPConnection -LocalPort 5081 -State Listen -ErrorAction Stop) } catch { return $false } }
-
+function Test-Port([int]$port) {
+    try { return [bool](Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop) }
+    catch { return $false }
+}
 function Get-OriginUrl {
     if (Test-Path $originFile) { return (Get-Content $originFile -Raw -EA SilentlyContinue).Trim() }
-    if (Test-Path $legacyUrl) { return (Get-Content $legacyUrl -Raw -EA SilentlyContinue).Trim() }
     return $null
 }
 
-function Test-UrlAlive([string]$u) {
+# curl.exe works from the SYSTEM scheduled task where Invoke-WebRequest cannot reach some hosts.
+function Test-UrlFast([string]$u, [double]$maxSec = 8.0) {
     if (-not $u) { return $false }
     try {
-        # Invoke-WebRequest from a SYSTEM/elevated PowerShell cannot reach trycloudflare.com on
-        # this machine (proxy/DNS), so it reported healthy tunnels as dead and churned them.
-        # curl.exe works in every context, including the SYSTEM scheduled task.
         $curlExe = (Get-Command curl.exe -EA Stop).Source
-        # A quick tunnel can answer 200 but take 20-47s to do so. That is technically "up" but
-        # unusable for live video/control, and used to leave the public URL crawling for ages.
-        # Require a healthy latency too, so a slow tunnel is replaced instead of left running.
-        $result = & $curlExe -sS -o NUL -w '%{http_code}|%{time_total}' --max-time 25 "$u/index.html" 2>$null
+        $result = & $curlExe -sS -o NUL -w '%{http_code}|%{time_total}' --max-time 15 "$u/index.html" 2>$null
         if ($result -match '^(\d+)\|([\d.]+)$') {
-            return ([string]$Matches[1] -eq '200' -and [double]$Matches[2] -le 12.0)
+            return ([string]$Matches[1] -eq '200' -and [double]$Matches[2] -le $maxSec)
         }
-        return $false
-    } catch { return $false }
-}
-
-function Start-FixedServer {
-    if (-not (Test-Path $serverExe)) { Log "fixed server exe missing: $serverExe"; return $false }
-    if (Test-Port5081) { return $true }
-    $args = @('--urls', 'http://0.0.0.0:5081', "--PublicBaseUrl=$stableUrl")
-    Log "  starting fixed server: $serverExe (cwd=$serverDir, args=$($args -join ' '))"
-    Start-Process -FilePath $serverExe -ArgumentList $args -WorkingDirectory $serverDir -WindowStyle Hidden `
-        -RedirectStandardOutput "$logDir\server.out.log" -RedirectStandardError "$logDir\server.err.log"
-    for ($i = 0; $i -lt 40; $i++) { Start-Sleep -Milliseconds 700; if (Test-Port5081) { return $true } }
+    } catch {}
     return $false
 }
 
-function New-QuickTunnel {
-    # Returns a NEW https URL only after it actually answers. Never kill the existing tunnel
-    # here: the Worker must be redeployed FIRST, otherwise a failed deploy leaves the public
-    # URL pointing at a dead upstream. Old tunnels are stopped only after a successful deploy.
-    $script:newTunnelPid = 0
-    if (-not (Test-Path $cf)) { Log "  cloudflared missing: $cf"; return $null }
-    # Unique filename per attempt: a previous cloudflared from this same loop can still hold
-    # tunnel-new-$PID.* open, and Set-Content used to throw "file in use", aborting the heal.
-    $tag = "$PID-$([guid]::NewGuid().ToString('N').Substring(0,8))"
-    $out = Join-Path $logDir "tunnel-new-$tag.out.log"
-    $err = Join-Path $logDir "tunnel-new-$tag.err.log"
-    Set-Content $out ''; Set-Content $err ''
-    $p = Start-Process -FilePath $cf `
-        -ArgumentList @('tunnel','--url','http://localhost:5081','--no-autoupdate') `
-        -RedirectStandardOutput $out -RedirectStandardError $err -WindowStyle Hidden -PassThru
-    for ($i=0; $i -lt 60; $i++) {
-        Start-Sleep -Seconds 2
-        $txt = (Get-Content $out -Raw -EA SilentlyContinue) + "`n" + (Get-Content $err -Raw -EA SilentlyContinue)
-        # Real quick-tunnel hostnames always contain a hyphen. The loose pattern used to match
-        # "https://api.trycloudflare.com" from Cloudflare's status text and waste minutes.
-        if ($txt -match 'https://[a-z0-9]+(?:-[a-z0-9]+)+\.trycloudflare\.com') {
-            $candidate = $Matches[0]
-            if (Test-UrlAlive $candidate) {
-                $script:newTunnelPid = $p.Id
-                return $candidate
-            }
-            Log "  candidate tunnel not answering yet: $candidate"
-        }
-        if ($p.HasExited) {
-            Log "  cloudflared exited early code=$($p.ExitCode)"
-            try { Stop-Process -Id $p.Id -Force -EA SilentlyContinue } catch {}
-            return $null
-        }
+function Start-Server([int]$port, [string]$exe, [string]$bind, [string]$label) {
+    if (-not (Test-Path $exe)) { Log "  $label exe missing: $exe"; return $false }
+    $args = @('--urls', $bind, "--PublicBaseUrl=$stableUrl")
+    Log "  starting ${label}: $exe (cwd=$serverDir, args=$($args -join ' '))"
+    Start-Process -FilePath $exe -ArgumentList $args -WorkingDirectory $serverDir -WindowStyle Hidden
+    for ($i = 0; $i -lt 40; $i++) {
+        Start-Sleep -Milliseconds 700
+        if (Test-Port $port) { Log "  $label back on $port"; return $true }
     }
-    # Failed: leave the old tunnel alone and clean up only our new process.
-    try { Stop-Process -Id $p.Id -Force -EA SilentlyContinue } catch {}
-    return $null
+    Log "  $label FAILED TO START on $port"
+    return $false
 }
 
-function Apply-NewOrigin([string]$newUrl) {
-    $old = Get-OriginUrl
-    if (-not $newUrl) { return $false }
-    if ($old -eq $newUrl) { return $true }
-    Log "  worker redeploy requested: $old -> $newUrl"
-    $deployed = $false
-    if (Test-Path $workerDeploy) {
-        # Bound the deploy: a hung Cloudflare API call used to stall the whole self-heal loop
-        # while the public URL sat on a dead upstream.
-        $do = Join-Path $logDir 'worker-deploy.out.log'
-        $de = Join-Path $logDir 'worker-deploy.err.log'
-        try {
-            Set-Content $do ''; Set-Content $de ''
-            $dp = Start-Process powershell `
-                -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$workerDeploy`"",'-Origin',"`"$newUrl`"") `
-                -RedirectStandardOutput $do -RedirectStandardError $de -WindowStyle Hidden -PassThru
-            if ($dp.WaitForExit(90000)) {
-                $out = (Get-Content $do -Raw -EA SilentlyContinue) + "`n" + (Get-Content $de -Raw -EA SilentlyContinue)
-                ($out -split "`r?`n") | Where-Object { $_ } | ForEach-Object { Log "    worker: $_" }
-                $deployed = ($dp.ExitCode -eq 0 -and $out -match 'deployed')
-            } else {
-                try { $dp.Kill() } catch {}
-                Log "    worker redeploy timed out after 90s; public URL left on old origin"
-            }
-        } catch { Log "    worker redeploy FAIL: $($_.Exception.Message)" }
-    } else { Log "    worker deploy script missing: $workerDeploy" }
-    if (-not $deployed) {
-        # Never write CURRENT-ORIGIN before this succeeds: the file is what the next loop trusts.
-        Log "  worker redeploy failed; keeping old origin $old so the public URL stays up"
-        return $false
-    }
-    [System.IO.File]::WriteAllText($originFile, $newUrl)
-    if (Test-Path $legacyUrl) { [System.IO.File]::WriteAllText($legacyUrl, $newUrl) }
-    # Only now can the old upstream tunnels go away: the Worker already serves the new one.
-    $keep = $script:newTunnelPid
-    Get-Process cloudflared -EA SilentlyContinue |
-        Where-Object { $keep -le 0 -or $_.Id -ne $keep } | Stop-Process -Force -EA SilentlyContinue
-    Log "  quick origin changed: $old -> $newUrl (worker deployed, tunnel pid=$keep)"
-    # Deliberately NO link/config/shortcut rewrites and NO server restart: the public URL is
-    # stable, so nothing except the Worker's hidden ORIGIN changed.
-    return $true
+function Deploy-Worker([string]$u) {
+    # Bound the deploy: a hung Cloudflare API call must not stall the self-heal loop.
+    if (-not (Test-Path $workerDeploy)) { Log "  worker deploy script missing: $workerDeploy"; return $false }
+    $do = Join-Path $logDir 'worker-deploy.out.log'
+    $de = Join-Path $logDir 'worker-deploy.err.log'
+    try {
+        Set-Content $do ''; Set-Content $de ''
+        $dp = Start-Process powershell `
+            -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$workerDeploy`"",'-Origin',"`"$u`"") `
+            -RedirectStandardOutput $do -RedirectStandardError $de -WindowStyle Hidden -PassThru
+        if ($dp.WaitForExit(90000)) {
+            $out = (Get-Content $do -Raw -EA SilentlyContinue) + "`n" + (Get-Content $de -Raw -EA SilentlyContinue)
+            ($out -split "`r?`n") | Where-Object { $_ } | ForEach-Object { Log "    worker: $_" }
+            # The deploy script prints "origin=... deployed" only after the PUT succeeded. The
+            # workers.dev subdomain step is best-effort and may warn without affecting the deploy.
+            return ($out -match 'origin=.*deployed')
+        }
+        try { $dp.Kill() } catch {}
+        Log "  worker deploy timed out after 90s"
+    } catch { Log "  worker deploy FAIL: $($_.Exception.Message)" }
+    return $false
 }
 
-# Only ONE keep-alive loop may touch the tunnel. An orphaned elevated copy used to fight the
-# SYSTEM task, killing each other's tunnels and locking the shared log files.
+function Ensure-FunnelOrigin {
+    $cur = Get-OriginUrl
+    if ($cur -eq $funnelOrigin) {
+        if (-not (Test-UrlFast $funnelOrigin)) {
+            Log "funnel origin slow/down ($funnelOrigin) - Tailscale will reconnect; no tunnel churn"
+        }
+        return
+    }
+    Log "worker origin drifted ($cur) -> pinning to Funnel $funnelOrigin"
+    if (Deploy-Worker $funnelOrigin) {
+        [System.IO.File]::WriteAllText($originFile, $funnelOrigin)
+        Log "  worker pinned to Funnel; public URL unchanged"
+    } else {
+        Log "  worker pin failed; keeping last origin $cur and retrying next cycle"
+    }
+}
+
+function Ensure-FunnelRoute {
+    # Verify existing Tailscale Funnel still has /pulsedesk -> 5080. Log only: never rewrite
+    # the user's pre-existing domain/route configuration.
+    if (-not (Test-Path $tsExe)) { return }
+    try {
+        $j = & $tsExe funnel status --json 2>$null | Out-String | ConvertFrom-Json
+        $handlers = $j.Web.PSObject.Properties.Value.Handlers
+        $route = $null
+        foreach ($h in $handlers) {
+            if ($h.PSObject.Properties.Name -contains '/pulsedesk') { $route = $h.'/pulsedesk'.Proxy }
+        }
+        if (-not $route) { Log "WARNING: Tailscale Funnel /pulsedesk route missing - leaving existing config untouched" }
+    } catch { Log "could not read Tailscale Funnel status: $($_.Exception.Message)" }
+}
+
+# Only ONE keep-alive loop may touch the origin.
 $created = $false
-# V2 mutex: an older in-memory loop (session 0) can hold the legacy name while stuck on the
-# old file-lock bug. A fresh loop must be able to take over self-healing without elevation.
 $single = New-Object System.Threading.Mutex($true, 'Global\PulseDeskKeepAliveV2', [ref]$created)
 if (-not $created) { Log 'another keep-alive instance is already running; exiting'; exit }
 
-Log "keep-alive started (stable workers.dev URL, self-healing tunnel origin)"
+Log "keep-alive started (stable workers.dev URL pinned to Tailscale Funnel)"
 
 while ($true) {
     try {
-        # 1) admin server - restart ONLY the fixed 5081 build, always with the stable URL.
-        if (-not (Test-Port5081)) {
-            Log "fixed server down on 5081 -> starting dist\server_new build"
-            if (Start-FixedServer) { Log "  fixed server back on 5081" } else { Log "  FIXED SERVER FAILED TO START" }
+        # 1) legacy admin server on 5081 (protected process stays untouched if alive).
+        if (-not (Test-Port 5081)) {
+            Log "legacy server down on 5081 -> starting dist\server_new build"
+            Start-Server 5081 $legacyExe 'http://0.0.0.0:5081' 'legacy server' | Out-Null
         }
 
-        # 2) hidden quick-tunnel origin. The Worker keeps the public URL alive, so we watch the
-        #    origin directly; when it changes, only the Worker script is redeployed.
-        $origin = Get-OriginUrl
-        # A candidate tunnel whose Worker deploy failed is kept alive and retried. Otherwise a
-        # transient Cloudflare API timeout used to strand the Worker on a killed old tunnel.
-        if ($script:pendingOrigin) {
-            Log "retrying pending worker deploy to $script:pendingOrigin"
-            $script:newTunnelPid = $script:pendingPid
-            if (Apply-NewOrigin $script:pendingOrigin) {
-                $script:pendingOrigin = $null; $script:pendingPid = 0
-                $origin = Get-OriginUrl
-            } else {
-                $script:newTunnelPid = $script:pendingPid
-            }
-        }
-        if (-not (Get-Process cloudflared -EA SilentlyContinue) -or -not (Test-UrlAlive $origin)) {
-            Log "tunnel origin unhealthy (url=$origin) -> creating fresh quick tunnel"
-            $newUrl = New-QuickTunnel
-            if ($newUrl) {
-                Log "  new tunnel origin: $newUrl"
-                $ready = $false
-                for ($i=0; $i -lt 20; $i++) {
-                    Start-Sleep -Seconds 2
-                    if (Test-UrlAlive $newUrl) { $ready = $true; break }
-                }
-                if ($ready) {
-                    if (-not (Apply-NewOrigin $newUrl)) {
-                        $script:pendingOrigin = $newUrl
-                        $script:pendingPid    = $script:newTunnelPid
-                        Log "  worker not switched yet; keeping candidate $newUrl for retry"
-                    }
-                } else { Log "  new origin not reachable yet; will retry next cycle" }
-            } else { Log "  failed to create tunnel" }
+        # 2) Funnel listener on 5080. Both the agent and admin viewers must land here so the
+        #    in-memory live-video broker can forward frames between them.
+        if (-not (Test-Port 5080)) {
+            Log "Funnel listener down on 5080 -> restarting"
+            Start-Server 5080 $funnelExe 'http://127.0.0.1:5080' 'Funnel listener' | Out-Null
         }
 
-        # 3) agent: the enrolled agent starts itself in the user's desktop session (HKCU Run +
-        #    EmployeeHome watchdog). This SYSTEM task must NEVER start it in session 0: that
-        #    copy sees a black desktop and its fake "screen locked" status breaks live view.
+        # 3) keep the Worker pinned to the fast Funnel origin (no quick-tunnel churn).
+        Ensure-FunnelOrigin
+        Ensure-FunnelRoute
+
+        # 4) agent: the enrolled agent self-starts in the user's desktop session (HKCU Run +
+        #    EmployeeHome watchdog). Stop any session-0 copy that would show a black desktop.
         $agents = @(Get-CimInstance Win32_Process -Filter "Name='PulseDesk.Agent.exe'" -EA SilentlyContinue)
         foreach ($a in $agents) {
             if ($a.SessionId -eq 0) {
@@ -220,8 +156,6 @@ while ($true) {
                 catch { Log "could not stop session-0 agent pid=$($a.ProcessId): $($_.Exception.Message)" }
             }
         }
-        $interactive = @($agents | Where-Object { $_.SessionId -gt 0 })
-        if ($interactive.Count -eq 0) { Log "no interactive agent found; agent self-start is handled by the installed user-session startup entry" }
     }
     catch { Log "keep-alive error: $($_.Exception.Message)" }
     if ($Once) { break }

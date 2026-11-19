@@ -11,8 +11,12 @@ addEventListener('fetch', event => {
 function originUrl(request) {
   const target = new URL(ORIGIN);
   const url = new URL(request.url);
+  // ORIGIN may carry a base path (e.g. the existing Tailscale Funnel /pulsedesk route).
+  // Keep it on every proxied request so the public URL stays unchanged for employees.
+  const base = target.pathname.replace(/\/+$/, '');
   url.protocol = target.protocol;
   url.host = target.host;
+  url.pathname = base + url.pathname;
   return url.toString();
 }
 
