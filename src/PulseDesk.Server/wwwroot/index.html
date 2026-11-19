@@ -186,6 +186,10 @@
         <button class="btn sm ghost" id="btnFull" onclick="toggleFullscreen()">Full screen</button>
         <button class="btn sm ghost" onclick="minimizeLive()">Minimize</button>
         <button class="btn sm ghost" id="btnCtl" onclick="toggleControl()">Remote control</button>
+        <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#9fb7b3;cursor:pointer" title="Ghalati se click hone par control ON na ho">
+          <input type="checkbox" id="ctlConfirm" checked /> Confirm
+        </label>
+        <span style="font-size:11px;color:#7f9a96">Ctrl+Shift+Q = admin keyboard/mouse turant free</span>
         <select id="liveQuality" style="max-width:180px" onchange="applyQuality()" title="Stream quality">
           <option value="fast" selected>Quality: Smooth (recommended)</option>
           <option value="balanced">Quality: Balanced (clear text)</option>
@@ -679,6 +683,14 @@ function stopControlPing(){
 async function toggleControl(){
   if(!liveDevice){ toast('Connect a device first'); return; }
   const next = !controlOn;
+  // Safety: an accidental click on the button must never lock the employee (or trap the
+  // admin's own keyboard) without an explicit second confirmation.
+  if(next && $('#ctlConfirm') && $('#ctlConfirm').checked){
+    if(!confirm('Remote control ON karein?\n\nEmployee ka keyboard/mouse block ho jayega. Aapka apna keyboard/mouse aapke paas rahega.\nRokne ke liye Ctrl+Shift+Q dabayein.')){
+      toast('Cancel - remote control nahi chalaya');
+      return;
+    }
+  }
   controlCmdAt = Date.now();
   try{
     await cmd(liveDevice, next ? 'control-on' : 'control-off');
@@ -703,7 +715,7 @@ function setControlUi(){
   if(st) st.classList.toggle('control', controlOn);
   const h = $('#liveHint');
   if(h) h.textContent = controlOn
-    ? 'Remote control ON - employee ka keyboard/mouse BLOCK hai, aapka mouse/keyboard chal raha hai. Rokne ke liye "Stop control".'
+    ? 'Remote control ON - employee ka keyboard/mouse BLOCK hai. Aapke apne shortcuts (Ctrl/Alt/Tab) safe hain. Turant rokne ke liye Ctrl+Shift+Q ya "Stop control".'
     : 'Tip: image par click karein -> full screen. Remote control ON hone par aapka mouse/keyboard device par chalta hai.';
 }
 
@@ -846,13 +858,33 @@ const isTypingTarget = e => {
   return !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable));
 };
 
+// Admin safety escape: works even if the WebSocket is down. Releases the employee lock AND
+// gives the admin's own keyboard/mouse straight back (including fullscreen).
+function adminEscapeControl(){
+  if(!controlOn) return;
+  const id = liveDevice;
+  try{ liveSend({cmd:'control-off'}); }catch(e){}
+  if(id) cmd(id,'control-off').catch(()=>{});
+  controlOn = false; stopControlPing(); setControlUi();
+  if(document.fullscreenElement){ try{ document.exitFullscreen(); }catch(e){} }
+  toast('Remote control OFF - aapka keyboard/mouse free hai');
+}
+
 document.addEventListener('keydown', e => {
+  // Emergency release - never forwarded to the employee.
+  if(e.ctrlKey && e.shiftKey && (e.key === 'Q' || e.key === 'q')){
+    e.preventDefault(); e.stopPropagation();
+    adminEscapeControl();
+    return;
+  }
   if(!controlOn || !liveWs || liveWs.readyState !== 1) return;
   if(isTypingTarget(e)) return;   // phone text box / password field keeps its own typing
+  // The admin's own shortcuts and Tab/Escape must stay local. Intercepting them used to make
+  // the Stop control button unreachable and feel like the admin keyboard was locked.
+  if(e.ctrlKey || e.altKey || e.metaKey || e.key === 'Tab' || e.key === 'Escape') return;
   const vk = vkFor(e);
-  const mod = e.ctrlKey || e.altKey || e.metaKey;
   if(vk && LIVE_NAV_KEYS.has(e.key)) e.preventDefault();
-  if(e.key && e.key.length === 1 && !mod){
+  if(e.key && e.key.length === 1){
     // plain typing (unicode, layout independent)
     liveSend({ cmd:'input', kind:'text', text:e.key });
     if(e.key === ' ') e.preventDefault();
@@ -864,10 +896,11 @@ document.addEventListener('keydown', e => {
 }, true);
 
 document.addEventListener('keyup', e => {
+  if(e.ctrlKey && e.shiftKey && (e.key === 'Q' || e.key === 'q')){ e.preventDefault(); return; }
   if(!controlOn || !liveWs || liveWs.readyState !== 1) return;
   if(isTypingTarget(e)) return;
-  const mod = e.ctrlKey || e.altKey || e.metaKey;
-  if(e.key && e.key.length === 1 && !mod) return;   // typed as text, no keyup needed
+  if(e.ctrlKey || e.altKey || e.metaKey || e.key === 'Tab' || e.key === 'Escape') return;
+  if(e.key && e.key.length === 1) return;   // typed as text, no keyup needed
   const vk = vkFor(e); if(!vk) return;
   e.preventDefault();
   liveSend({ cmd:'input', kind:'key', vk, down:false });
