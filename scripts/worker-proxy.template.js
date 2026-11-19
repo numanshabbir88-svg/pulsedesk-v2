@@ -1,11 +1,11 @@
 // PulseDesk stable-URL proxy.
-// The quick-tunnel origin changes whenever the home internet changes. This Worker keeps one
-// permanent public hostname; keep-alive.ps1 redeploys this script with the current origin.
-// Service-worker syntax is used so it can be uploaded through the plain Cloudflare API.
+// The hidden upstream is the fast Tailscale Funnel route. This Worker keeps one permanent public
+// hostname; keep-alive.ps1 redeploys this script with the current ORIGIN. Service-worker syntax is
+// used so it can be uploaded through the plain Cloudflare API.
 const ORIGIN = "__ORIGIN__";
 
 addEventListener('fetch', event => {
-  event.respondWith(proxy(event.request));
+  event.respondWith(proxy(event.request, event));
 });
 
 function originUrl(request) {
@@ -41,7 +41,7 @@ async function proxyWebSocket(request, url) {
   const downstream = pair[1]; // handled here
   downstream.accept({ allowHalfOpen: true });
 
-  // The browser's onopen fires as soon as we accept the client (line below), which is before
+  // The browser's onopen fires as soon as we accept the client, which is before
   // the upstream tunnel socket finishes connecting. Command frames sent in that window (the
   // initial {"cmd":"status"} probe and stream/control commands) used to be dropped, producing
   // a false "AGENT OLD" pill and lost control commands. Queue them and flush once upstream is open.
@@ -64,7 +64,39 @@ async function proxyWebSocket(request, url) {
   return new Response(null, { status: 101, webSocket: client });
 }
 
-async function proxy(request) {
+// Static pages must not pay the Cloudflare -> Funnel round trip on every load. The Funnel fetch
+// can take 3-26 s from the edge; caching the immutable UI/invite HTML at the Worker edge keeps
+// page loads instant. API, WebSocket and the 66 MB download are never cached.
+function isCacheable(request) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return false;
+  const p = new URL(request.url).pathname;
+  if (p === '/' || p === '/index.html' || p === '/favicon.ico') return true;
+  if (p.startsWith('/join/')) return true;
+  if (p.startsWith('/css/') || p.startsWith('/js/') || p.startsWith('/lib/') ||
+      p.startsWith('/assets/') || p.startsWith('/static/')) return true;
+  return false;
+}
+
+async function cachedFetch(request, url, init, event) {
+  try {
+    const cache = caches.default;
+    if (!cache) return fetch(url, init);
+    const key = new Request(request.url, { method: 'GET' });
+    const hit = await cache.match(key);
+    if (hit) return hit;
+
+    const res = await fetch(url, init);
+    if (res.ok) {
+      const stored = res.clone();
+      event.waitUntil(cache.put(key, stored).catch(() => {}));
+    }
+    return res;
+  } catch (e) {
+    return fetch(url, init);
+  }
+}
+
+async function proxy(request, event) {
   const url = originUrl(request);
   if ((request.headers.get('Upgrade') || '').toLowerCase() === 'websocket')
     return proxyWebSocket(request, url);
@@ -82,5 +114,6 @@ async function proxy(request) {
   }
 
   // Returning the response directly streams the 66 MB download (including 206/Range replies).
+  if (isCacheable(request)) return cachedFetch(request, url, init, event);
   return fetch(url, init);
 }
