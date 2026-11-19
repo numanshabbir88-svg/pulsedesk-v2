@@ -64,6 +64,30 @@ internal static class RemoteInput
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetCursorPos(int X, int Y);
+
+    private static long _lastFailLog;
+
+    /// <summary>
+    /// SendInput can silently fail (UIPI when the target window is more privileged, or a
+    /// disconnected input desktop). Log it instead of failing invisibly, and fall back for moves.
+    /// </summary>
+    private static uint Send(INPUT[] inputs)
+    {
+        uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        if (sent == 0)
+        {
+            long now = Environment.TickCount64;
+            if (now - _lastFailLog > 5000)
+            {
+                _lastFailLog = now;
+                Settings.Log($"remote input: SendInput failed err={Marshal.GetLastWin32Error()}");
+            }
+        }
+        return sent;
+    }
+
     [DllImport("user32.dll")]
     private static extern uint MapVirtualKey(uint uCode, uint uMapType);
 
@@ -87,7 +111,12 @@ internal static class RemoteInput
         inp[0].u.mi.dx = (int)Math.Round((x - b.Left) * 65535.0 / Math.Max(1, b.Width - 1));
         inp[0].u.mi.dy = (int)Math.Round((y - b.Top) * 65535.0 / Math.Max(1, b.Height - 1));
         inp[0].u.mi.dwExtraInfo = InputLock.InjectionTag;
-        SendInput(1, inp, Marshal.SizeOf<INPUT>());
+        if (Send(inp) == 0)
+        {
+            // Untagged SetCursorPos is not blocked by the low-level mouse hook (no injected
+            // event is generated), so the admin still gets a visible cursor on a failed SendInput.
+            try { SetCursorPos(x, y); } catch { }
+        }
     }
 
     public static void Button(string button, bool down)
@@ -127,7 +156,7 @@ internal static class RemoteInput
         inp[0].u.mi.dwFlags = flag;
         inp[0].u.mi.mouseData = data;
         inp[0].u.mi.dwExtraInfo = InputLock.InjectionTag;
-        SendInput(1, inp, Marshal.SizeOf<INPUT>());
+        Send(inp);
     }
 
     // ---------------------------------------------------------------- keyboard
@@ -142,7 +171,7 @@ internal static class RemoteInput
         if (IsExtended(vk)) flags |= EXTENDEDKEY;
         inp[0].u.ki.dwFlags = flags;
         inp[0].u.ki.dwExtraInfo = InputLock.InjectionTag;
-        SendInput(1, inp, Marshal.SizeOf<INPUT>());
+        Send(inp);
     }
 
     /// <summary>Types literal text (layout independent) - used for normal typing.</summary>
@@ -155,7 +184,7 @@ internal static class RemoteInput
             list.Add(UnicodeKey(ch, false));
             list.Add(UnicodeKey(ch, true));
         }
-        SendInput((uint)list.Count, list.ToArray(), Marshal.SizeOf<INPUT>());
+        Send(list.ToArray());
     }
 
     private static INPUT UnicodeKey(char ch, bool up)

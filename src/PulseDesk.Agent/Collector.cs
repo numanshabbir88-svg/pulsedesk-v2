@@ -402,6 +402,9 @@ public sealed class Collector : BackgroundService
                 }
                 if (ok)
                 {
+                    // BitBlt never copies the OS cursor. Without this the admin drives a
+                    // pointer they cannot see, which looks exactly like "control not working".
+                    DrawCursor(memDc, src, w, h);
                     // FromHbitmap wraps the GDI handle; the finally block below deletes it.
                     // Clone into a GDI+ owned bitmap first, otherwise LockBits later reads
                     // freed memory (hard crash) instead of the captured pixels.
@@ -419,6 +422,29 @@ public sealed class Collector : BackgroundService
             Native.ReleaseDC(IntPtr.Zero, screenDc);
         }
         return CaptureFallback(src, w, h);
+    }
+
+    /// <summary>
+    /// Draw the real mouse pointer into the captured bitmap. GDI screen copies (BitBlt) omit the
+    /// cursor, so an admin moving the employee's mouse had no visual feedback and assumed remote
+    /// control was dead. Cheap enough for every frame (one GetCursorInfo + one DrawIconEx).
+    /// </summary>
+    private static void DrawCursor(IntPtr memDc, Rectangle src, int w, int h)
+    {
+        try
+        {
+            var ci = new Native.CURSORINFO { cbSize = Marshal.SizeOf<Native.CURSORINFO>() };
+            if (!Native.GetCursorInfo(ref ci) || ci.hCursor == IntPtr.Zero ||
+                (ci.flags & Native.CURSOR_SHOWING) == 0) return;
+            double sx = (double)w / Math.Max(1, src.Width);
+            double sy = (double)h / Math.Max(1, src.Height);
+            int cx = (int)Math.Round((ci.ptScreenPos.X - src.Left) * sx);
+            int cy = (int)Math.Round((ci.ptScreenPos.Y - src.Top) * sy);
+            int iw = Math.Max(8, (int)Math.Round(Native.GetSystemMetrics(Native.SM_CXCURSOR) * sx));
+            int ih = Math.Max(8, (int)Math.Round(Native.GetSystemMetrics(Native.SM_CYCURSOR) * sy));
+            Native.DrawIconEx(memDc, cx, cy, ci.hCursor, iw, ih, 0, IntPtr.Zero, Native.DI_NORMAL);
+        }
+        catch { }
     }
 
     /// <summary>GDI+ path used only when the GDI copy fails (rare, e.g. protected content).</summary>

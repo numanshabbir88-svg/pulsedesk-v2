@@ -129,6 +129,31 @@ internal static class Native
 
     internal const uint SRCCOPY = 0x00CC0020;
 
+    // ---- cursor drawing (BitBlt never captures the mouse pointer) ----
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct POINT { public int X; public int Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct CURSORINFO
+    {
+        public int cbSize;
+        public int flags;
+        public IntPtr hCursor;
+        public POINT ptScreenPos;
+    }
+
+    [DllImport("user32.dll")]
+    internal static extern bool GetCursorInfo(ref CURSORINFO pci);
+
+    [DllImport("user32.dll")]
+    internal static extern bool DrawIconEx(IntPtr hdc, int xLeft, int yTop, IntPtr hIcon,
+        int cxWidth, int cyHeight, int istepIfAniCur, IntPtr hbrFlickerFreeDraw, uint diFlags);
+
+    internal const int CURSOR_SHOWING = 0x00000001;
+    internal const uint DI_NORMAL = 0x0003;
+    internal const int SM_CXCURSOR = 17;
+    internal const int SM_CYCURSOR = 18;
+
     internal static int IdleSeconds()
     {
         var info = new LASTINPUTINFO { cbSize = 8 };
