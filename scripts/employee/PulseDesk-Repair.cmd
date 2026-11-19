@@ -13,8 +13,7 @@ set "REPORT=%USERPROFILE%\Desktop\PulseDesk-Repair.txt"
 
 net session >nul 2>&1
 if %errorlevel% neq 0 (
-  echo Admin rights chahiye - UAC prompt par Yes dabayein...
-  powershell -NoProfile -Command "Start-Process '%~f0' -Verb RunAs"
+  powershell -NoProfile -Command "Start-Process '%~f0' -Verb RunAs" >nul 2>&1
   exit /b
 )
 
@@ -42,9 +41,6 @@ if not defined WORKING (
   >>"%REPORT%" echo.
   >>"%REPORT%" echo Kisi bhi PulseDesk address tak is laptop se raasta nahi hai.
   >>"%REPORT%" echo Ye internet/DNS/proxy ya security software ka block hai - report admin ko bhejein.
-  echo No address reachable. Report: %REPORT%
-  echo.
-  pause
   exit /b 1
 )
 
@@ -77,7 +73,4 @@ if exist "%LOG%" (
   powershell -NoProfile -Command "Get-Content '%LOG%' -Tail 25" >>"%REPORT%" 2>&1
 )
 
-echo.
-echo Done. Report: %REPORT%
-echo.
-pause
+exit /b 0
