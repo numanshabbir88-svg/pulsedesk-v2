@@ -85,7 +85,10 @@ function New-QuickTunnel {
     for ($i=0; $i -lt 45; $i++) {
         Start-Sleep -Seconds 2
         $txt = (Get-Content $out -Raw -EA SilentlyContinue) + "`n" + (Get-Content $err -Raw -EA SilentlyContinue)
-        if ($txt -match 'https://[a-z0-9-]+\.trycloudflare\.com') { return $Matches[0] }
+        # Real quick-tunnel hostnames always contain a hyphen (e.g. relief-denver-contests-magical).
+        # The loose pattern used to match "https://api.trycloudflare.com" from Cloudflare's status
+        # text and waste ~10 minutes retrying a URL that can never serve the dashboard.
+        if ($txt -match 'https://[a-z0-9]+(?:-[a-z0-9]+)+\.trycloudflare\.com') { return $Matches[0] }
         if ($p.HasExited) { Log "  cloudflared exited early code=$($p.ExitCode)"; return $null }
     }
     return $null
