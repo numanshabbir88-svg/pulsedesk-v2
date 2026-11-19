@@ -51,6 +51,9 @@ internal static class RemoteInput
     private const uint INPUT_MOUSE = 0;
     private const uint INPUT_KEYBOARD = 1;
 
+    private const uint MOUSEEVENTF_MOVE = 0x0001;
+    private const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
+
     private const uint LEFTDOWN = 0x0002, LEFTUP = 0x0004;
     private const uint RIGHTDOWN = 0x0008, RIGHTUP = 0x0010;
     private const uint MIDDLEDOWN = 0x0020, MIDDLEUP = 0x0040;
@@ -61,9 +64,6 @@ internal static class RemoteInput
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool SetCursorPos(int x, int y);
-
     [DllImport("user32.dll")]
     private static extern uint MapVirtualKey(uint uCode, uint uMapType);
 
@@ -73,8 +73,21 @@ internal static class RemoteInput
         var b = ScreenBounds();
         int x = b.Left + (int)Math.Round(Math.Clamp(nx, 0, 1) * (b.Width - 1));
         int y = b.Top + (int)Math.Round(Math.Clamp(ny, 0, 1) * (b.Height - 1));
-        SetCursorPos(x, y);
-        InputLock.SetTarget(x, y);
+        // SetCursorPos used to generate an UNTAGGED mouse event that InputLock's own hook
+        // swallowed, so the pointer never really moved. Use tagged injected input instead:
+        // the hook recognizes our tag, passes the move, and Windows updates the real cursor.
+        MoveAbsolute(x, y, b);
+    }
+
+    private static void MoveAbsolute(int x, int y, Rectangle b)
+    {
+        var inp = new INPUT[1];
+        inp[0].type = INPUT_MOUSE;
+        inp[0].u.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+        inp[0].u.mi.dx = (int)Math.Round((x - b.Left) * 65535.0 / Math.Max(1, b.Width - 1));
+        inp[0].u.mi.dy = (int)Math.Round((y - b.Top) * 65535.0 / Math.Max(1, b.Height - 1));
+        inp[0].u.mi.dwExtraInfo = InputLock.InjectionTag;
+        SendInput(1, inp, Marshal.SizeOf<INPUT>());
     }
 
     public static void Button(string button, bool down)
@@ -113,6 +126,7 @@ internal static class RemoteInput
         inp[0].type = INPUT_MOUSE;
         inp[0].u.mi.dwFlags = flag;
         inp[0].u.mi.mouseData = data;
+        inp[0].u.mi.dwExtraInfo = InputLock.InjectionTag;
         SendInput(1, inp, Marshal.SizeOf<INPUT>());
     }
 
@@ -127,6 +141,7 @@ internal static class RemoteInput
         uint flags = down ? 0 : KEYUP;
         if (IsExtended(vk)) flags |= EXTENDEDKEY;
         inp[0].u.ki.dwFlags = flags;
+        inp[0].u.ki.dwExtraInfo = InputLock.InjectionTag;
         SendInput(1, inp, Marshal.SizeOf<INPUT>());
     }
 
@@ -150,6 +165,7 @@ internal static class RemoteInput
         inp.u.ki.wVk = 0;
         inp.u.ki.wScan = ch;
         inp.u.ki.dwFlags = UNICODE | (up ? KEYUP : 0);
+        inp.u.ki.dwExtraInfo = InputLock.InjectionTag;
         return inp;
     }
 
@@ -179,7 +195,6 @@ internal static class RemoteInput
 internal static class ControlBanner
 {
     private static Form? _host;          // hidden message-pump host, never made visible
-    private static System.Windows.Forms.Timer? _pulse;
     private static readonly object _gate = new();
     private static bool _started;
 
@@ -219,7 +234,6 @@ internal static class ControlBanner
         try
         {
             if (active) InputLock.Enable(); else InputLock.Disable();
-            if (_pulse != null) { if (active) _pulse.Start(); else _pulse.Stop(); }
         }
         catch { }
     }
@@ -239,10 +253,6 @@ internal static class ControlBanner
                     Visible = false
                 };
                 _host = f;
-
-                // keeps the cursor pinned where the admin left it (employee mouse cannot drift it)
-                _pulse = new System.Windows.Forms.Timer { Interval = 120 };
-                _pulse.Tick += (_, _) => InputLock.ReassertCursor();
 
                 _ = f.Handle;
                 Application.Run(new ApplicationContext(f));
