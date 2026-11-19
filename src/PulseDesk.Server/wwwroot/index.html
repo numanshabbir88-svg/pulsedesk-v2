@@ -395,21 +395,23 @@ let liveRealFrameSeen = false;
 // on a slow link the viewer steps down (fewer pixels / lower JPEG quality / slower interval)
 // to keep the picture moving, and steps back up when bandwidth recovers.
 const LADDER = [
-  { w: 480,  q: 32, ms: 120 },   // 0 - very low bandwidth (few KB/s)
-  { w: 640,  q: 40, ms: 90  },   // 1
-  { w: 720,  q: 36, ms: 60  },   // 2 - smooth default (low delay on mobile uplinks)
+  { w: 480,  q: 32, ms: 100 },   // 0 - very low bandwidth (few KB/s)
+  { w: 640,  q: 40, ms: 80  },   // 1
+  { w: 720,  q: 38, ms: 60  },   // 2 - smooth default (low delay on mobile uplinks)
   { w: 960,  q: 48, ms: 60  },   // 3
   { w: 1280, q: 58, ms: 80  },   // 4
   { w: 1600, q: 72, ms: 100 },   // 5 - Full HD
   { w: 2560, q: 84, ms: 180 }    // 6 - 2K text
 ];
 const QUALITY = {
-  fast:     { level: 2, cap: 4, label: 'Smooth' },
-  balanced: { level: 3, cap: 5, label: 'Balanced' },
+  // Smooth must never climb past 960px: on the employee laptop the bigger presets cost more
+  // capture time than the tunnel saves, which appeared as ruk-ruk / jerky video.
+  fast:     { level: 2, cap: 3, label: 'Smooth' },
+  balanced: { level: 3, cap: 4, label: 'Balanced' },
   hd:       { level: 4, cap: 6, label: 'Full HD' },
   ultra:    { level: 6, cap: 6, label: 'Ultra' }
 };
-let autoLevel = 2, autoCeiling = 4, frameTimes = [], autoChecked = 0, upStreak = 0;
+let autoLevel = 2, autoCeiling = 3, frameTimes = [], autoChecked = 0, upStreak = 0;
 // More than one open admin tab must not fight over the agent's live preset: each tab used to
 // resend its own quality every 10 s, flipping 800px/960px and making the picture stall.
 const TAB_ID = Math.random().toString(36).slice(2);
@@ -420,6 +422,7 @@ let qualitySentOnce = false;
 // still "open". A small quality command forces the agent to send a fresh frame. The agent
 // keeps its learned quality when the link is slow, so this never fights its rate control.
 let liveQualityTimer = null;
+let liveStreamTimer = null;
 
 /* ---- zoom (Fit = browser scales, 100%+ = real stream pixels, scroll to pan) ---- */
 function applyZoom(){
@@ -458,6 +461,12 @@ function startLive(){
     $('#liveState').className='pill on'; $('#liveState').textContent='connecting';
     $('#liveMsg').textContent='Pehla frame aa raha hai...';
     if(!qualitySentOnce){ applyQuality(true); qualitySentOnce = true; }
+    // A stray "stream off" (a viewer disconnect racing a reconnect) can leave the agent
+    // receiving quality commands while sending NO frames - the picture then looks frozen.
+    // Re-assert stream-on directly over this socket so the stream self-heals in <= 5 s.
+    liveSend({cmd:'stream',on:true});
+    if(liveStreamTimer) clearInterval(liveStreamTimer);
+    liveStreamTimer = setInterval(()=>{ if(liveWs && liveWs.readyState===1) liveSend({cmd:'stream',on:true}); }, 5000);
     if(liveQualityTimer) clearInterval(liveQualityTimer);
     liveQualityTimer = setInterval(()=>{ if(liveWs && liveWs.readyState===1) applyQuality(true); }, 10000);
     startStatusPoll();
@@ -521,6 +530,7 @@ function stopLive(){
   livePending = null;
   liveRealFrameSeen = false;
   if(liveQualityTimer){ clearInterval(liveQualityTimer); liveQualityTimer=null; }
+  if(liveStreamTimer){ clearInterval(liveStreamTimer); liveStreamTimer=null; }
   frameTimes = []; autoChecked = 0; upStreak = 0;
   if(liveObjUrl){ URL.revokeObjectURL(liveObjUrl); liveObjUrl=null; }
   if(controlOn && liveWs && liveWs.readyState === 1){
@@ -653,7 +663,14 @@ document.addEventListener('fullscreenchange', ()=>{
 let controlPing = null;
 function startControlPing(){
   stopControlPing();
-  controlPing = setInterval(()=>liveSend({cmd:'ping'}), 8000);
+  // Re-assert control on the agent, not just the watchdog ping. A control-off racing a
+  // reconnect used to leave the employee's input locked while admin mouse/keyboard were
+  // silently ignored (the agent had already left control mode).
+  controlPing = setInterval(()=>{
+    if(!controlOn) return;
+    liveSend({cmd:'ping'});
+    liveSend({cmd:'control-on'});
+  }, 8000);
 }
 function stopControlPing(){
   if(controlPing){ clearInterval(controlPing); controlPing = null; }

@@ -25,7 +25,11 @@ if (-not (Test-Path $indexPath)) { throw "missing $indexPath" }
 $html = Get-Content $indexPath -Raw
 # Pin the live WebSocket to the fast hidden origin (the page still loads from workers.dev).
 $wsBase = $Origin.TrimEnd('/') -replace '^https:', 'wss:' -replace '^http:', 'ws:'
-$inject = "<script>window.PDS_WS_BASE='$wsBase/';</script>"
+# Auto-refresh any tab that still has an older embedded UI (fixes stale stream/control logic
+# without asking the admin to remember to reload after every deploy).
+$sha = [System.Security.Cryptography.SHA256]::Create()
+try { $ver = ([System.BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($html))).Replace('-', '')).Substring(0, 8) } finally { $sha.Dispose() }
+$inject = "<script>window.PDS_WS_BASE='$wsBase/';(function(){try{var v='$ver';if(localStorage.getItem('pdsUiVer')!==v){localStorage.setItem('pdsUiVer',v);location.reload();}}catch(e){}})();</script>"
 $html = $html.Replace('<head>', "<head>$inject")
 $embedded = $html | ConvertTo-Json -Compress -Depth 5
 $js = (Get-Content $template -Raw).Replace('__ORIGIN__', $Origin.TrimEnd('/')).Replace('__EMBEDDED_INDEX__', $embedded)
