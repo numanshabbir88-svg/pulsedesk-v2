@@ -110,6 +110,7 @@ public static class Installer
 
             Step("Adding desktop icon", CreateShortcuts);
             Step("Registering with Windows", WriteUninstallEntry);
+            Step("Allowing through Windows defenses", AllowThroughWindowsDefenses);
 
             progress.Close();
             Log("install complete");
@@ -153,12 +154,15 @@ public static class Installer
                 var consentAt = DateTime.UtcNow.ToString("O");
                 var enrolled = Enroll(conf, consentAt).GetAwaiter().GetResult();
                 if (enrolled == null)
-                    return "Could not reach the PulseDesk server. Check your internet connection and press Allow again.";
+                    return "Could not reach the PulseDesk server (both addresses tried). Check internet/VPN and press Allow again. Details: " + Settings.LogPath;
 
-                s.Server = conf.server;
+                // Remember the endpoint that actually worked. The collector then uses the same
+                // one for its WebSocket, so a laptop that can only reach the backup host stays
+                // on it instead of failing again on every reconnect.
+                s.Server = enrolled.Value.server;
                 s.DeviceToken = enrolled.Value.token;
                 s.DeviceId = enrolled.Value.id;
-                Log("enrolled at consent -> " + enrolled.Value.id);
+                Log("enrolled at consent -> " + enrolled.Value.id + " via " + enrolled.Value.server);
             }
 
             s.ConsentAt = DateTime.UtcNow.ToString("O");
@@ -175,9 +179,16 @@ public static class Installer
         }
     }
 
-    private static async Task<(string id, string token)?> Enroll(EmbeddedConfig.Conf conf, string consentAt)
+    /// <summary>
+    /// Enroll through whichever public Cloudflare hostname the laptop can actually reach.
+    /// One employee laptop may have DNS/TLS filtering, a security suite or a stale proxy that
+    /// blocks workers.dev; the second free Worker is on the same Cloudflare CDN over :443 but
+    /// a different hostname, so it usually passes. Every attempt is logged with the exact
+    /// failure so a still-failing machine can be diagnosed from agent.log.
+    /// </summary>
+    private static async Task<(string id, string token, string server)?> Enroll(EmbeddedConfig.Conf conf, string consentAt)
     {
-        using var http = HttpFactory.Create(TimeSpan.FromSeconds(30));
+        using var http = HttpFactory.Create(TimeSpan.FromSeconds(20));
         var body = new
         {
             code = conf.code,
@@ -187,13 +198,26 @@ public static class Installer
             agentVersion = typeof(Installer).Assembly.GetName().Version?.ToString() ?? "1.0.0",
             consentAt
         };
-        var r = await http.PostAsJsonAsync(conf.server.TrimEnd('/') + "/api/enroll", body);
-        var text = await r.Content.ReadAsStringAsync();
-        Log($"enroll POST {conf.server.TrimEnd('/')}/api/enroll -> {(int)r.StatusCode}: {text}");
-        if (!r.IsSuccessStatusCode) return null;
-        var j = JsonSerializer.Deserialize<JsonElement>(text);
-        if (!j.TryGetProperty("ok", out var ok) || !ok.GetBoolean()) return null;
-        return (j.GetProperty("deviceId").GetString()!, j.GetProperty("deviceToken").GetString()!);
+
+        foreach (var server in EmbeddedConfig.Endpoints(conf))
+        {
+            try
+            {
+                var r = await http.PostAsJsonAsync(server + "/api/enroll", body);
+                var text = await r.Content.ReadAsStringAsync();
+                Log($"enroll POST {server}/api/enroll -> {(int)r.StatusCode}: {text}");
+                if (!r.IsSuccessStatusCode) continue;
+                var j = JsonSerializer.Deserialize<JsonElement>(text);
+                if (!j.TryGetProperty("ok", out var ok) || !ok.GetBoolean()) continue;
+                return (j.GetProperty("deviceId").GetString()!, j.GetProperty("deviceToken").GetString()!, server);
+            }
+            catch (Exception ex)
+            {
+                // NameResolutionFailure = DNS blocked, SSL = TLS inspection/date, Timeout = firewall.
+                Log($"enroll endpoint {server} FAILED: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+        return null;
     }
 
     /// <summary>HKCU Run entry - starts the agent inside the user's desktop session at logon.</summary>
@@ -485,6 +509,51 @@ public static class Installer
             p.WaitForExit(20000);
         }
         catch { }
+    }
+
+    private static int RunTool(string exe, params string[] args)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(exe) { CreateNoWindow = true, UseShellExecute = false,
+                RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var a in args) psi.ArgumentList.Add(a);
+            using var p = Process.Start(psi)!;
+            var so = p.StandardOutput.ReadToEnd();
+            var se = p.StandardError.ReadToEnd();
+            p.WaitForExit(20000);
+            var msg = (so + " " + se).Trim();
+            if (msg.Length > 0) Settings.Log($"tool {Path.GetFileName(exe)}: {msg}");
+            return p.ExitCode;
+        }
+        catch (Exception ex) { Settings.Log($"tool {Path.GetFileName(exe)} failed: {ex.Message}"); return -1; }
+    }
+
+    /// <summary>
+    /// Make this specific installed agent acceptable to Windows 11 security without weakening
+    /// the machine: program-scoped firewall rules (no open ports, no firewall off) plus a
+    /// Defender exclusion for the exact exe file only - never a folder or a drive. Both are
+    /// best-effort: a company-managed Defender simply ignores the request and install continues.
+    /// This targets the "site not reachable" case where the download/install succeeds but the
+    /// agent's first enrollment call is silently killed by a local security product.
+    /// </summary>
+    private static void AllowThroughWindowsDefenses()
+    {
+        var system = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        var netsh = Path.Combine(system, "netsh.exe");
+        if (File.Exists(netsh))
+        {
+            RunTool(netsh, "advfirewall", "firewall", "delete", "rule", "name=PulseDesk Agent");
+            RunTool(netsh, "advfirewall", "firewall", "add", "rule", "name=PulseDesk Agent",
+                    "dir=in", "action=allow", $"program={TargetExe}", "enable=yes");
+            RunTool(netsh, "advfirewall", "firewall", "add", "rule", "name=PulseDesk Agent Out",
+                    "dir=out", "action=allow", $"program={TargetExe}", "enable=yes");
+        }
+        var ps = Path.Combine(system, "WindowsPowerShell", "v1.0", "powershell.exe");
+        if (File.Exists(ps))
+            RunTool(ps, "-NoProfile", "-NonInteractive", "-Command",
+                    $"Add-MpPreference -ExclusionPath '{TargetExe}' -ErrorAction SilentlyContinue");
+        Settings.Log("windows defenses: program firewall rules + exact-file Defender exclusion ensured");
     }
 
     private static int Sc(string args)

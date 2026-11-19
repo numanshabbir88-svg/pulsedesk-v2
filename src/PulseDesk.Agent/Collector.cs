@@ -586,23 +586,55 @@ public sealed class Collector : BackgroundService
         }
     }
 
+    /// <summary>
+    /// Public hosts this agent may use. Both are ordinary Cloudflare HTTPS endpoints, so a
+    /// restrictive Windows 11 firewall / AV that blocks one hostname can be bypassed by the
+    /// other without touching any device record or enrollment.
+    /// </summary>
+    private IReadOnlyList<string> ServerEndpoints()
+    {
+        var list = new List<string>();
+        void Add(string? u)
+        {
+            if (string.IsNullOrWhiteSpace(u)) return;
+            var v = u.Trim().TrimEnd('/');
+            if (!list.Any(x => x.Equals(v, StringComparison.OrdinalIgnoreCase))) list.Add(v);
+        }
+        Add(_s.Server);
+        foreach (var e in EmbeddedConfig.Endpoints(EmbeddedConfig.Read())) Add(e);
+        return list;
+    }
+
     private async Task SocketLoop(CancellationToken ct)
     {
-        var url = _s.Server.Replace("https://", "wss://").Replace("http://", "ws://").TrimEnd('/')
-                  + "/ws/agent?token=" + Uri.EscapeDataString(_s.DeviceToken);
+        var endpoints = ServerEndpoints();
         var buf = new byte[8192];
+        int next = 0;
 
         while (!ct.IsCancellationRequested)
         {
+            ClientWebSocket? ws = null;
+            bool connected = false;
+            int index = next % endpoints.Count;
+            var server = endpoints[index];
             try
             {
-                var ws = new ClientWebSocket();
+                var url = server.Replace("https://", "wss://").Replace("http://", "ws://").TrimEnd('/')
+                          + "/ws/agent?token=" + Uri.EscapeDataString(_s.DeviceToken);
+                ws = new ClientWebSocket();
                 ws.Options.Proxy = null;   // direct connection, never use a stale system proxy
                 // keeps NAT / mobile-router mappings alive when the stream is idle
                 ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(20);
                 await ws.ConnectAsync(new Uri(url), ct);
+                connected = true;
                 _ws = ws;
-                Settings.Log("ws connected");
+                Settings.Log("ws connected via " + server);
+                // Stick to the host that worked, including after a reconnect.
+                if (!string.Equals(_s.Server, server, StringComparison.OrdinalIgnoreCase))
+                {
+                    _s.Server = server;
+                    _s.Save();
+                }
 
                 while (ws.State == System.Net.WebSockets.WebSocketState.Open && !ct.IsCancellationRequested)
                 {
@@ -612,8 +644,23 @@ public sealed class Collector : BackgroundService
                     HandleCommand(text);
                 }
             }
-            catch (Exception ex) { Settings.Log("ws: " + ex.Message); }
-            finally { StopControl("remote control auto-released (agent disconnected)"); _ws = null; _streamOn = false; }
+            catch (Exception ex)
+            {
+                // Only a failed CONNECT advances to the next host. A drop on an established
+                // socket is a tunnel hiccup - retry the same host before switching.
+                if (!connected)
+                {
+                    Settings.Log($"ws connect failed [{server}] {ex.GetType().Name}: {ex.Message}");
+                    next = index + 1;
+                }
+                else Settings.Log("ws: " + ex.Message);
+            }
+            finally
+            {
+                StopControl("remote control auto-released (agent disconnected)");
+                _ws = null; _streamOn = false;
+                try { ws?.Dispose(); } catch { }
+            }
             await Task.Delay(3000, ct);
         }
     }

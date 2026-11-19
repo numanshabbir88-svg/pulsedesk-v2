@@ -69,7 +69,7 @@ function Start-Server([int]$port, [string]$exe, [string]$bind, [string]$label) {
     return $false
 }
 
-function Deploy-Worker([string]$u) {
+function Deploy-Worker([string]$u, [string]$scriptName = 'pulsedesk') {
     # Bound the deploy: a hung Cloudflare API call must not stall the self-heal loop.
     if (-not (Test-Path $workerDeploy)) { Log "  worker deploy script missing: $workerDeploy"; return $false }
     $do = Join-Path $logDir 'worker-deploy.out.log'
@@ -77,7 +77,7 @@ function Deploy-Worker([string]$u) {
     try {
         Set-Content $do ''; Set-Content $de ''
         $dp = Start-Process powershell `
-            -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$workerDeploy`"",'-Origin',"`"$u`"") `
+            -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$workerDeploy`"",'-Origin',"`"$u`"",'-ScriptName',"`"$scriptName`"") `
             -RedirectStandardOutput $do -RedirectStandardError $de -WindowStyle Hidden -PassThru
         if ($dp.WaitForExit(90000)) {
             $out = (Get-Content $do -Raw -EA SilentlyContinue) + "`n" + (Get-Content $de -Raw -EA SilentlyContinue)
@@ -120,7 +120,9 @@ function Ensure-FunnelOrigin {
     }
     if ($cur -ne $funnelOrigin) { Log "worker origin drifted ($cur) -> pinning to Funnel $funnelOrigin" }
     else { Log "worker source changed (UI/template/deploy script) -> redeploying" }
-    if (Deploy-Worker $funnelOrigin) {
+    # Keep BOTH free public hostnames on the same origin. New setups embed both, so a laptop
+    # blocked on one hostname can enroll/stream through the other; old devices are untouched.
+    if ((Deploy-Worker $funnelOrigin 'pulsedesk') -and (Deploy-Worker $funnelOrigin 'pdsbackup')) {
         [System.IO.File]::WriteAllText($originFile, $funnelOrigin)
         [System.IO.File]::WriteAllText($deployHashFile, $hash)
         Log "  worker updated; public URL unchanged"

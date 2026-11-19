@@ -28,15 +28,27 @@ app.UseStaticFiles(new Microsoft.AspNetCore.Builder.StaticFileOptions
 var cfg = app.Configuration;
 string AdminPassword = cfg["AdminPassword"] ?? "changeme";
 string PublicBase = (cfg["PublicBaseUrl"] ?? "http://localhost:5080").TrimEnd('/');
+// FREE redundancy: a second Cloudflare Worker on the same free workers.dev account. It proxies
+// the exact same origin, so a Windows 11 laptop whose DNS/TLS filter or AV blocks one hostname
+// can still enroll and stream through the other. The original URL never changes for existing
+// devices; this is only an extra address embedded in NEW setup files.
+string BackupBase = (cfg["BackupBaseUrl"] ?? "https://pdsbackup.pulsedesk-numan.workers.dev").TrimEnd('/');
 string AgentBundle = cfg["AgentBundlePath"] ?? "agent/PulseDesk.Agent.exe";
 string ShotDir = Path.GetFullPath(cfg["ScreenshotDir"] ?? "data/shots");
 Directory.CreateDirectory(ShotDir);
 
 // Exact size of the installer this invite generates (exe + embedded invite marker). The join
 // page uses it to verify a chunked download before offering the file to Windows.
+string[] PublicEndpoints() => BackupBase.Equals(PublicBase, StringComparison.OrdinalIgnoreCase)
+    ? new[] { PublicBase }
+    : new[] { PublicBase, BackupBase };
+
+string EnrollManifest(string code) =>
+    JsonSerializer.Serialize(new { code, server = PublicBase, servers = PublicEndpoints() });
+
 long BundleSize(string code)
 {
-    var conf = JsonSerializer.Serialize(new { code, server = PublicBase });
+    var conf = EnrollManifest(code);
     var marker = Encoding.UTF8.GetBytes("\nPLSDCONF:" + conf);
     return (File.Exists(AgentBundle) ? new FileInfo(AgentBundle).Length : 0) + marker.Length;
 }
@@ -692,7 +704,7 @@ app.MapGet("/download/{code}", (HttpContext ctx, string code) =>
     var expected = BundleSize(code);
     if (!File.Exists(cached) || new FileInfo(cached).Length != expected)
     {
-        var conf = JsonSerializer.Serialize(new { code, server = PublicBase });
+        var conf = EnrollManifest(code);
         var marker = Encoding.UTF8.GetBytes("\nPLSDCONF:" + conf);
         var temp = cached + ".tmp";
         using (var input = File.OpenRead(AgentBundle))
