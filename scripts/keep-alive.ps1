@@ -25,7 +25,10 @@ $cfgPath     = Join-Path $root 'dist\server\appsettings.json'
 $legacyExe   = Join-Path $root 'dist\server_new\PulseDesk.Server.exe'   # 5081 legacy build
 $funnelExe   = Join-Path $root 'dist\server_new\PulseDesk.Server.exe'   # 5080 Funnel listener (resumable download)
 $originFile  = Join-Path $logDir 'CURRENT-ORIGIN.txt'
+$deployHashFile = Join-Path $logDir 'worker-deploy.hash'
 $workerDeploy = Join-Path $PSScriptRoot 'deploy-worker.ps1'
+$workerTemplate = Join-Path $PSScriptRoot 'worker-proxy.template.js'
+$adminHtml = Join-Path $root 'dist\server\wwwroot\index.html'
 $stableUrl   = 'https://pulsedesk.pulsedesk-numan.workers.dev'          # permanent, never rewritten
 $funnelOrigin = 'https://desktop-l21qf2i.taila5e0e7.ts.net/pulsedesk'   # fast, stable upstream
 $tsExe       = 'C:\Program Files\Tailscale\tailscale.exe'
@@ -89,20 +92,40 @@ function Deploy-Worker([string]$u) {
     return $false
 }
 
+function Get-WorkerSourceHash {
+    $files = @($workerDeploy, $workerTemplate, $adminHtml)
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($f in $files) {
+        if (Test-Path $f) {
+            $item = Get-Item $f
+            [void]$sb.AppendLine("$($item.Name)|$($item.Length)|$($item.LastWriteTimeUtc.Ticks)")
+        }
+    }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [System.BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($sb.ToString())))
+    } finally { $sha.Dispose() }
+}
+
 function Ensure-FunnelOrigin {
     $cur = Get-OriginUrl
-    if ($cur -eq $funnelOrigin) {
+    $hash = Get-WorkerSourceHash
+    $oldHash = if (Test-Path $deployHashFile) { (Get-Content $deployHashFile -Raw -EA SilentlyContinue).Trim() } else { '' }
+    $needDeploy = ($cur -ne $funnelOrigin) -or ($hash -ne $oldHash)
+    if (-not $needDeploy) {
         if (-not (Test-UrlFast $funnelOrigin)) {
             Log "funnel origin slow/down ($funnelOrigin) - Tailscale will reconnect; no tunnel churn"
         }
         return
     }
-    Log "worker origin drifted ($cur) -> pinning to Funnel $funnelOrigin"
+    if ($cur -ne $funnelOrigin) { Log "worker origin drifted ($cur) -> pinning to Funnel $funnelOrigin" }
+    else { Log "worker source changed (UI/template/deploy script) -> redeploying" }
     if (Deploy-Worker $funnelOrigin) {
         [System.IO.File]::WriteAllText($originFile, $funnelOrigin)
-        Log "  worker pinned to Funnel; public URL unchanged"
+        [System.IO.File]::WriteAllText($deployHashFile, $hash)
+        Log "  worker updated; public URL unchanged"
     } else {
-        Log "  worker pin failed; keeping last origin $cur and retrying next cycle"
+        Log "  worker update failed; keeping last origin $cur and retrying next cycle"
     }
 }
 

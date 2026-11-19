@@ -3,6 +3,9 @@
 // hostname; keep-alive.ps1 redeploys this script with the current ORIGIN. Service-worker syntax is
 // used so it can be uploaded through the plain Cloudflare API.
 const ORIGIN = "__ORIGIN__";
+// The admin UI is embedded at deploy time so a cold Cloudflare edge never has to fetch it from
+// the hidden tunnel. This removes the 20-30 s first-load delay on a new network/Wi-Fi.
+const EMBEDDED_INDEX = __EMBEDDED_INDEX__;
 
 addEventListener('fetch', event => {
   event.respondWith(proxy(event.request, event));
@@ -100,6 +103,15 @@ async function proxy(request, event) {
   const url = originUrl(request);
   if ((request.headers.get('Upgrade') || '').toLowerCase() === 'websocket')
     return proxyWebSocket(request, url);
+
+  // Serve the admin console straight from the Worker: no tunnel round trip, instant on any colo.
+  const path = new URL(request.url).pathname;
+  if ((path === '/' || path === '/index.html') && EMBEDDED_INDEX) {
+    return new Response(EMBEDDED_INDEX, {
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=3600' }
+    });
+  }
 
   const headers = new Headers(request.headers);
   headers.delete('host'); // fetch sets Host from the target URL

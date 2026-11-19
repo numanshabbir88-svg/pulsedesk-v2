@@ -19,10 +19,15 @@ $accountId = if (Test-Path $AccountFile) { (Get-Content $AccountFile -Raw).Trim(
 $token = (Get-Content $TokenFile -Raw).Trim()
 $h = @{ 'Authorization' = "Bearer $token"; 'Content-Type' = 'application/javascript' }
 
-$js = (Get-Content $template -Raw).Replace('__ORIGIN__', $Origin.TrimEnd('/'))
+# Embed the deployed admin UI so page loads never wait on the hidden origin (cold edge fix).
+$indexPath = Join-Path $root 'dist\server\wwwroot\index.html'
+if (-not (Test-Path $indexPath)) { throw "missing $indexPath" }
+$html = Get-Content $indexPath -Raw
+$embedded = $html | ConvertTo-Json -Compress -Depth 5
+$js = (Get-Content $template -Raw).Replace('__ORIGIN__', $Origin.TrimEnd('/')).Replace('__EMBEDDED_INDEX__', $embedded)
 $api = "https://api.cloudflare.com/client/v4/accounts/$accountId/workers/scripts/$ScriptName"
 
-$r = Invoke-RestMethod -Method Put -Uri $api -Headers $h -Body $js -TimeoutSec 60
+$r = Invoke-RestMethod -Method Put -Uri $api -Headers $h -Body $js -TimeoutSec 180
 if (-not $r.success) { throw "worker deploy failed: $($r.messages | ForEach-Object { $_.message } | Out-String)" }
 
 # Make sure the script is reachable on the account's free workers.dev subdomain.
