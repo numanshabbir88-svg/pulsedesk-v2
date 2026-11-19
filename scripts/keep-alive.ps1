@@ -121,10 +121,23 @@ function Apply-NewOrigin([string]$newUrl) {
     Log "  worker redeploy requested: $old -> $newUrl"
     $deployed = $false
     if (Test-Path $workerDeploy) {
+        # Bound the deploy: a hung Cloudflare API call used to stall the whole self-heal loop
+        # while the public URL sat on a dead upstream.
+        $do = Join-Path $logDir 'worker-deploy.out.log'
+        $de = Join-Path $logDir 'worker-deploy.err.log'
         try {
-            $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $workerDeploy -Origin $newUrl 2>&1
-            $out | ForEach-Object { Log "    worker: $_" }
-            $deployed = ($LASTEXITCODE -eq 0 -and (($out | Out-String) -match 'deployed'))
+            Set-Content $do ''; Set-Content $de ''
+            $dp = Start-Process powershell `
+                -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$workerDeploy`"",'-Origin',"`"$newUrl`"") `
+                -RedirectStandardOutput $do -RedirectStandardError $de -WindowStyle Hidden -PassThru
+            if ($dp.WaitForExit(90000)) {
+                $out = (Get-Content $do -Raw -EA SilentlyContinue) + "`n" + (Get-Content $de -Raw -EA SilentlyContinue)
+                ($out -split "`r?`n") | Where-Object { $_ } | ForEach-Object { Log "    worker: $_" }
+                $deployed = ($dp.ExitCode -eq 0 -and $out -match 'deployed')
+            } else {
+                try { $dp.Kill() } catch {}
+                Log "    worker redeploy timed out after 90s; public URL left on old origin"
+            }
         } catch { Log "    worker redeploy FAIL: $($_.Exception.Message)" }
     } else { Log "    worker deploy script missing: $workerDeploy" }
     if (-not $deployed) {
