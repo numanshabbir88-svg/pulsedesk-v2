@@ -23,6 +23,10 @@ $h = @{ 'Authorization' = "Bearer $token"; 'Content-Type' = 'application/javascr
 $indexPath = Join-Path $root 'dist\server\wwwroot\index.html'
 if (-not (Test-Path $indexPath)) { throw "missing $indexPath" }
 $html = Get-Content $indexPath -Raw
+# Pin the live WebSocket to the fast hidden origin (the page still loads from workers.dev).
+$wsBase = $Origin.TrimEnd('/') -replace '^https:', 'wss:' -replace '^http:', 'ws:'
+$inject = "<script>window.PDS_WS_BASE='$wsBase/';</script>"
+$html = $html.Replace('<head>', "<head>$inject")
 $embedded = $html | ConvertTo-Json -Compress -Depth 5
 $js = (Get-Content $template -Raw).Replace('__ORIGIN__', $Origin.TrimEnd('/')).Replace('__EMBEDDED_INDEX__', $embedded)
 $api = "https://api.cloudflare.com/client/v4/accounts/$accountId/workers/scripts/$ScriptName"

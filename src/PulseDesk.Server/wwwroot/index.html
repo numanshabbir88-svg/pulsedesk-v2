@@ -447,7 +447,10 @@ function startLive(){
   const id = $('#liveDev').value; if(!id){ toast('No device'); return; }
   liveDevice = id;
   const proto = location.protocol==='https:'?'wss':'ws';
-  liveWs = new WebSocket(`${proto}://${location.host}${API_BASE}ws/admin?token=${encodeURIComponent(TOKEN)}&deviceId=${id}`);
+  // The Worker can pin the live socket to the fast hidden Funnel origin while the page itself
+  // stays on the permanent workers.dev URL. Without this, every JPEG takes a Cloudflare detour.
+  const wsBase = window.PDS_WS_BASE || `${proto}://${location.host}${API_BASE}`;
+  liveWs = new WebSocket(`${wsBase}ws/admin?token=${encodeURIComponent(TOKEN)}&deviceId=${id}`);
   const sock = liveWs;
   liveWs.binaryType='blob';
   $('#liveState').className='pill on'; $('#liveState').textContent='connecting';
