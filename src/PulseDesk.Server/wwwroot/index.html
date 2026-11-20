@@ -411,13 +411,12 @@ async function cmd(deviceId, command){
 let controlOn = false, liveDevice = '', lastMoveSent = 0, controlCmdAt = 0;
 let liveStopped = false, liveRetry = null, liveRetryDelay = 350;
 let liveKeepAlive = null, liveStaleTimer = null, lastForceFrameAt = 0;
-// Two real routes exist: the pinned origin (fast) and the same-origin worker. Either can
-// stall on a given day, so the viewer tries the other one automatically if no frame arrives.
-let wsPathIndex = 0, livePathTimer = null, liveFramesOnSocket = 0;
-function liveWsBases(){
+// Kal wala (perfect) tareeqa: sirf ek pinned fast origin. Aaj ka dual-path failover jab bhi
+// socket 0-frame ke saath close hota tha, admin ko slow same-origin worker par bhej deta tha.
+// Wapas single pinned path - public URL / invite / device sab waisay hi.
+function liveWsBase(){
   const proto = location.protocol==='https:'?'wss':'ws';
-  const same = `${proto}://${location.host}${API_BASE}`.replace(/\/*$/,'/');
-  return window.PDS_WS_BASE ? [String(window.PDS_WS_BASE).replace(/\/*$/,'/'), same] : [same];
+  return window.PDS_WS_BASE ? String(window.PDS_WS_BASE).replace(/\/*$/,'/') : `${proto}://${location.host}${API_BASE}`.replace(/\/*$/,'/');
 }
 let statusTimer = null, statusProbe = null, statusSeen = false, liveLocked = false, lockToastShown = false;
 // "Latest frame wins" on the browser too: if the device renders slower than the incoming
@@ -512,9 +511,7 @@ function startLive(keepFrame){
   frameTimes = []; autoChecked = 0; upStreak = 0;
   const id = $('#liveDev').value; if(!id){ toast('No device'); return; }
   liveDevice = id;
-  const bases = liveWsBases();
-  const wsBase = bases[wsPathIndex % bases.length];
-  liveFramesOnSocket = 0;
+  const wsBase = liveWsBase();
   liveWs = new WebSocket(`${wsBase}ws/admin?token=${encodeURIComponent(TOKEN)}&deviceId=${id}`);
   const sock = liveWs;
   liveWs.binaryType='blob';
@@ -522,11 +519,6 @@ function startLive(keepFrame){
   liveWs.onopen = ()=>{
     liveRetryDelay = 350;   // a successful open resets the backoff
     if(liveStaleTimer){ clearTimeout(liveStaleTimer); liveStaleTimer=null; }
-    if(livePathTimer){ clearTimeout(livePathTimer); livePathTimer=null; }
-    // Pehle yahan 6s ka watchdog tha jo frame na aane par socket khud close kar deta tha.
-    // Video pause / unchanged screen par agent frame skip karta hai - us waqt ye forced close
-    // reconnect loop banata tha aur screen stuck dikhti thi. Hata diya; stream-on har 2.5s
-    // apne aap fresh frame force karta hai, isliye socket khula rehne par koi nuksan nahi.
     $('#liveState').className='pill on'; $('#liveState').textContent='connecting';
     $('#liveMsg').textContent='Pehla frame aa raha hai...';
     if(!qualitySentOnce){ applyQuality(true); qualitySentOnce = true; }
@@ -555,8 +547,6 @@ function startLive(keepFrame){
       // waiting up to 10 s for the next status poll.
       if(liveLocked) setLockUi(false);
     }
-    liveFramesOnSocket++;
-    if(liveFramesOnSocket === 1 && livePathTimer){ clearTimeout(livePathTimer); livePathTimer=null; }
     if(liveLocked) return;   // locked: never paint a black frame over the last real one
     if(liveStaleTimer){ clearTimeout(liveStaleTimer); liveStaleTimer=null; }
     livePending = ev.data;
@@ -582,9 +572,7 @@ function startLive(keepFrame){
     livePending = null;
     if(liveQualityTimer){ clearInterval(liveQualityTimer); liveQualityTimer=null; }
     if(liveKeepAlive){ clearInterval(liveKeepAlive); liveKeepAlive=null; }
-    if(livePathTimer){ clearTimeout(livePathTimer); livePathTimer=null; }
-    if(liveFramesOnSocket === 0) wsPathIndex++;   // this route gave nothing - try the other one
-    else liveRetryDelay = 350;                    // it worked once, so keep using it
+    liveRetryDelay = 350;   // a real socket drop: retry the same pinned path quickly
     // Keep the last real frame during a short reconnect: blanking it instantly made even a
     // 1 s tunnel blip look like a dead connection. Hide it only if the link stays down.
     if(!liveStaleTimer){
@@ -619,8 +607,6 @@ function stopLive(keepFrame){
   if(liveStreamTimer){ clearInterval(liveStreamTimer); liveStreamTimer=null; }
   if(liveKeepAlive){ clearInterval(liveKeepAlive); liveKeepAlive=null; }
   if(liveStaleTimer){ clearTimeout(liveStaleTimer); liveStaleTimer=null; }
-  if(livePathTimer){ clearTimeout(livePathTimer); livePathTimer=null; }
-  liveFramesOnSocket = 0;
   frameTimes = []; autoChecked = 0; upStreak = 0;
   if(!keepFrame && liveObjUrl){ URL.revokeObjectURL(liveObjUrl); liveObjUrl=null; }
   if(controlOn && liveWs && liveWs.readyState === 1){
