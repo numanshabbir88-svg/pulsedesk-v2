@@ -518,6 +518,8 @@ function startLive(keepFrame){
   const bases = liveWsBases();
   const wsBase = bases[wsPathIndex % bases.length];
   liveFramesOnSocket = 0;
+  // Nayi socket ko "dead" mat samjho jab tak uska pehla frame na aaye (slow path ~12s le sakta hai).
+  liveLastFrameAt = Date.now();
   liveWs = new WebSocket(`${wsBase}ws/admin?token=${encodeURIComponent(TOKEN)}&deviceId=${id}`);
   const sock = liveWs;
   liveWs.binaryType='blob';
@@ -525,14 +527,14 @@ function startLive(keepFrame){
   liveWs.onopen = ()=>{
     if(liveStaleTimer){ clearTimeout(liveStaleTimer); liveStaleTimer=null; }
     if(livePathTimer){ clearTimeout(livePathTimer); livePathTimer=null; }
-    // 12s watchdog: slow path first frame ~8.8s leta hai, 6s use mar deta tha.
+    // 16s watchdog: slow worker path ka first frame 11.6s tak le liya hai (12s marginal tha).
     // Frame aa gaya to clear; nahi aaya to onclose doosri path par chala jayega.
     livePathTimer = setTimeout(()=>{
       livePathTimer = null;
       if(liveFramesOnSocket === 0 && liveWs === sock && liveWs.readyState === 1){
         try{ liveWs.close(); }catch(e){}
       }
-    }, 12000);
+    }, 16000);
     $('#liveState').className='pill on'; $('#liveState').textContent='connecting';
     $('#liveMsg').textContent='Pehla frame aa raha hai...';
     if(!qualitySentOnce){ applyQuality(true); qualitySentOnce = true; }
