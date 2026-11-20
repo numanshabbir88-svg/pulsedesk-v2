@@ -376,6 +376,13 @@ async function loadDevices(){
       </td>
     </tr>`).join('') || `<tr><td colspan="6" style="color:var(--muted);padding:22px">Koi device nahi. Invites tab se employee add karein.</td></tr>`;
   fillDeviceSelects();
+  // A device that stopped reporting is OFFLINE, not "old". Keep the pill honest while the
+  // status probe is still waiting, so the admin does not chase a non-existent version issue.
+  const pill = $('#agentPill');
+  if(pill && liveDevice && !statusSeen && pill.style.display !== 'none'){
+    const d = devices.find(x=>x.id===liveDevice);
+    if(d && d.online === false) pill.textContent = 'AGENT OFFLINE';
+  }
 }
 function esc(s){ return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fillDeviceSelects(){
@@ -655,11 +662,15 @@ function startStatusPoll(){
   const ask = () => liveSend({ cmd:'status' });
   ask();
   statusTimer = setInterval(ask, 10000);
-  // Old agents (installed before remote control existed) never answer "status".
+  // No status reply has two very different causes: an old agent, or an agent that is simply
+  // not connected. Showing "AGENT OLD" for an offline device sent the admin down the wrong path.
   statusProbe = setTimeout(()=>{
     if(statusSeen) return;
-    const p = $('#agentPill');
-    if(p){ p.style.display = 'inline-flex'; p.textContent = 'AGENT OLD'; }
+    const p = $('#agentPill'); if(!p) return;
+    const d = (devices||[]).find(x=>x.id===liveDevice);
+    const offline = d && d.online === false;
+    p.style.display = 'inline-flex';
+    p.textContent = offline ? 'AGENT OFFLINE' : 'AGENT OLD';
   }, 8000);
 }
 function stopStatusPoll(){
@@ -756,7 +767,9 @@ async function toggleControl(){
     setControlUi();
     $('#liveStage').focus();
     if(next && !statusSeen){
-      toast('Agent purana hai (AGENT OLD) - remote control nahi chalega. Laptop par scripts\\update-agent.ps1 chalayein.');
+      const d = (devices||[]).find(x=>x.id===liveDevice);
+      if(d && d.online === false) toast('Agent offline hai - employee laptop par agent chalana zaroori hai.');
+      else toast('Agent purana hai (AGENT OLD) - remote control nahi chalega. Laptop par scripts\\update-agent.ps1 chalayein.');
     }
     else if(next && liveLocked) toast('Control ON, magar laptop locked hai - pehle unlock karein');
     else if(next) toast('Remote control ON - employee ka keyboard/mouse block hai');
