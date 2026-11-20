@@ -409,14 +409,18 @@ async function cmd(deviceId, command){
 
 /* ---------------- live */
 let controlOn = false, liveDevice = '', lastMoveSent = 0, controlCmdAt = 0;
-let liveStopped = false, liveRetry = null, liveRetryDelay = 350;
+let liveStopped = false, liveRetry = null;
 let liveKeepAlive = null, liveStaleTimer = null, lastForceFrameAt = 0;
-// Kal wala (perfect) tareeqa: sirf ek pinned fast origin. Aaj ka dual-path failover jab bhi
-// socket 0-frame ke saath close hota tha, admin ko slow same-origin worker par bhej deta tha.
-// Wapas single pinned path - public URL / invite / device sab waisay hi.
-function liveWsBase(){
+// Auto-reconnect: do real routes - fast pinned origin + stable same-origin worker. Kabhi origin
+// 502 deta hai, kabhi worker slow hota hai. Jo pehle frame de, usi par rehte hain; fail par
+// turant doosri par chale jate hain. Public URL / invite / device sab waisay hi rehte hain.
+let wsPathIndex = 0, liveFramesOnSocket = 0, livePathTimer = null, liveLastFrameAt = 0;
+function liveWsBases(){
   const proto = location.protocol==='https:'?'wss':'ws';
-  return window.PDS_WS_BASE ? String(window.PDS_WS_BASE).replace(/\/*$/,'/') : `${proto}://${location.host}${API_BASE}`.replace(/\/*$/,'/');
+  const same = `${proto}://${location.host}${API_BASE}`.replace(/\/*$/,'/');
+  const fast = window.PDS_WS_BASE ? String(window.PDS_WS_BASE).replace(/\/*$/,'/') : null;
+  // Dedupe: dono same ho to sirf ek path (pointless switching se bachne ke liye).
+  return fast && fast !== same ? [fast, same] : [same];
 }
 let statusTimer = null, statusProbe = null, statusSeen = false, liveLocked = false, lockToastShown = false;
 // "Latest frame wins" on the browser too: if the device renders slower than the incoming
@@ -432,7 +436,7 @@ let liveRealFrameSeen = false;
 const LADDER = [
   { w: 480,  q: 32, ms: 100 },   // 0 - very low bandwidth (few KB/s)
   { w: 640,  q: 40, ms: 80  },   // 1
-  { w: 720,  q: 38, ms: 60  },   // 2 - smooth default (low delay on mobile uplinks)
+  { w: 1600, q: 58, ms: 60  },   // 2 - smooth default: native width (no slow StretchBlt), sharp q58
   { w: 960,  q: 48, ms: 60  },   // 3
   { w: 1280, q: 58, ms: 80  },   // 4
   { w: 1600, q: 72, ms: 100 },   // 5 - Full HD
@@ -511,14 +515,24 @@ function startLive(keepFrame){
   frameTimes = []; autoChecked = 0; upStreak = 0;
   const id = $('#liveDev').value; if(!id){ toast('No device'); return; }
   liveDevice = id;
-  const wsBase = liveWsBase();
+  const bases = liveWsBases();
+  const wsBase = bases[wsPathIndex % bases.length];
+  liveFramesOnSocket = 0;
   liveWs = new WebSocket(`${wsBase}ws/admin?token=${encodeURIComponent(TOKEN)}&deviceId=${id}`);
   const sock = liveWs;
   liveWs.binaryType='blob';
   $('#liveState').className='pill on'; $('#liveState').textContent='connecting';
   liveWs.onopen = ()=>{
-    liveRetryDelay = 350;   // a successful open resets the backoff
     if(liveStaleTimer){ clearTimeout(liveStaleTimer); liveStaleTimer=null; }
+    if(livePathTimer){ clearTimeout(livePathTimer); livePathTimer=null; }
+    // 12s watchdog: slow path first frame ~8.8s leta hai, 6s use mar deta tha.
+    // Frame aa gaya to clear; nahi aaya to onclose doosri path par chala jayega.
+    livePathTimer = setTimeout(()=>{
+      livePathTimer = null;
+      if(liveFramesOnSocket === 0 && liveWs === sock && liveWs.readyState === 1){
+        try{ liveWs.close(); }catch(e){}
+      }
+    }, 12000);
     $('#liveState').className='pill on'; $('#liveState').textContent='connecting';
     $('#liveMsg').textContent='Pehla frame aa raha hai...';
     if(!qualitySentOnce){ applyQuality(true); qualitySentOnce = true; }
@@ -537,6 +551,11 @@ function startLive(keepFrame){
   };
   liveWs.onmessage = ev => {
     if(typeof ev.data === 'string'){ handleAgentText(ev.data); return; }
+    // Har binary frame is proof the route is alive - count it BEFORE the locked/paint checks,
+    // otherwise a locked screen (black frames ignored) looks like a dead socket to liveHeal.
+    liveFramesOnSocket++; liveLastFrameAt = Date.now();
+    if(liveFramesOnSocket === 1 && livePathTimer){ clearTimeout(livePathTimer); livePathTimer=null; }
+    if(liveStaleTimer){ clearTimeout(liveStaleTimer); liveStaleTimer=null; }
     // Ignore genuinely empty (locked/black desktop) frames. The threshold must stay LOW:
     // real frames on a slow link are often only 1-3 KB, so a 4 KB cutoff would freeze the
     // picture at the last large frame and look exactly like the "old screen" problem.
@@ -548,7 +567,6 @@ function startLive(keepFrame){
       if(liveLocked) setLockUi(false);
     }
     if(liveLocked) return;   // locked: never paint a black frame over the last real one
-    if(liveStaleTimer){ clearTimeout(liveStaleTimer); liveStaleTimer=null; }
     livePending = ev.data;
     if(liveRaf) return;                       // already scheduled - drop the older frame
     liveRaf = requestAnimationFrame(() => {
@@ -572,7 +590,8 @@ function startLive(keepFrame){
     livePending = null;
     if(liveQualityTimer){ clearInterval(liveQualityTimer); liveQualityTimer=null; }
     if(liveKeepAlive){ clearInterval(liveKeepAlive); liveKeepAlive=null; }
-    liveRetryDelay = 350;   // a real socket drop: retry the same pinned path quickly
+    if(livePathTimer){ clearTimeout(livePathTimer); livePathTimer=null; }
+    if(liveFramesOnSocket === 0 && liveWsBases().length > 1) wsPathIndex++;  // kisi ne frame nahi diya - doosri path try karo
     // Keep the last real frame during a short reconnect: blanking it instantly made even a
     // 1 s tunnel blip look like a dead connection. Hide it only if the link stays down.
     if(!liveStaleTimer){
@@ -588,11 +607,11 @@ function startLive(keepFrame){
     // phone locked, Wi-Fi switched, laptop slept ... reconnect by itself while this tab is open
     if(!liveStopped){
       if(liveRetry){ clearTimeout(liveRetry); }
+      // Flat 400ms: koi exponential backoff nahi. Internet/laptop wapas aate hi turant connect.
       liveRetry = setTimeout(()=>{
         liveRetry=null;
         if(!liveStopped) startLive(true);   // keep the last picture while we reconnect
-      }, liveRetryDelay);
-      liveRetryDelay = Math.min(3000, liveRetryDelay * 2);
+      }, 400);
     }
   };
   liveWs.onerror = ()=>{ $('#liveState').className='pill off'; $('#liveState').textContent='error'; };
@@ -628,6 +647,23 @@ function stopLive(keepFrame){
     $('#liveState').className='pill'; $('#liveState').textContent='idle';
   }
 }
+
+// Internet wapas aane (admin network badalna / Wi-Fi switch) ya tab wapas active hone par
+// turant reconnect - 400ms ke andar. Agar socket abhi bhi open hai par frame nahi aa rahe,
+// to use close karke doosri path try karwata hai.
+function liveHeal(){
+  if(!liveDevice || liveStopped) return;
+  const dead = !liveWs || liveWs.readyState > 1 || (Date.now() - liveLastFrameAt > 8000);
+  if(!dead) return;
+  if(liveRetry){ clearTimeout(liveRetry); liveRetry=null; }
+  if(liveWs){ try{ liveWs.close(); }catch(e){} }   // onclose handled reconnect
+  else startLive(true);
+}
+window.addEventListener('online', liveHeal);
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) liveHeal(); });
+// Browser online/offline events chhup bhi sakte hain (router flap, VPN switch). Har 15s mein
+// ek chupcha health check: 8s se zyada frame na aaye to socket badal kar dobara connect.
+let liveHealTimer = setInterval(liveHeal, 15000);
 
 function canLeadQuality(){
   // Only one tab (per origin) owns the quality command. The lease is refreshed by that tab's
