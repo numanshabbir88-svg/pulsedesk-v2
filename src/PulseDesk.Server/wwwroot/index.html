@@ -485,14 +485,11 @@ function liveSend(obj){
     const el = $('#inputCount');
     if(el) el.textContent = String(++inputSentCount);
     if(obj.kind === 'move') showRemoteCursor(obj.x, obj.y);
-    // The agent skips frames whose cheap change-hash is unchanged. A short admin action (click,
-    // key, wheel) can fall between its sample points, so force one FRESH frame for those.
-    // Mouse moves are NOT force-pushed on every tick: "stream on" sets the agent's forceFrame,
-    // which drops its 50 ms control cadence to 10 ms and disables hash-skipping. At 25-60/s that
-    // saturated the uplink and made control choppy. Moves already repaint via the normal cadence.
+    // The agent skips frames whose cheap change-hash is unchanged. A small cursor move or a
+    // short admin action can fall between its sample points, so the picture updates seconds late.
+    // Re-assert "stream on" (throttled) to force a FRESH frame right after our input.
     const now = performance.now();
-    const urgent = obj.kind !== 'move';
-    if(urgent || now - lastForceFrameAt >= 150){
+    if(now - lastForceFrameAt >= 40){
       lastForceFrameAt = now;
       liveWs.send(JSON.stringify({cmd:'stream',on:true}));
     }
@@ -526,14 +523,10 @@ function startLive(keepFrame){
     liveRetryDelay = 350;   // a successful open resets the backoff
     if(liveStaleTimer){ clearTimeout(liveStaleTimer); liveStaleTimer=null; }
     if(livePathTimer){ clearTimeout(livePathTimer); livePathTimer=null; }
-    // Open alone is not enough: the WS bridge can accept us and deliver no frames. If the
-    // first frame does not arrive, switch to the other route instead of showing "connecting".
-    livePathTimer = setTimeout(()=>{
-      livePathTimer = null;
-      if(liveFramesOnSocket === 0 && liveWs === sock && liveWs.readyState === 1){
-        try{ liveWs.close(); }catch(e){}   // onclose advances wsPathIndex once
-      }
-    }, 6000);
+    // Pehle yahan 6s ka watchdog tha jo frame na aane par socket khud close kar deta tha.
+    // Video pause / unchanged screen par agent frame skip karta hai - us waqt ye forced close
+    // reconnect loop banata tha aur screen stuck dikhti thi. Hata diya; stream-on har 2.5s
+    // apne aap fresh frame force karta hai, isliye socket khula rehne par koi nuksan nahi.
     $('#liveState').className='pill on'; $('#liveState').textContent='connecting';
     $('#liveMsg').textContent='Pehla frame aa raha hai...';
     if(!qualitySentOnce){ applyQuality(true); qualitySentOnce = true; }
@@ -542,7 +535,7 @@ function startLive(keepFrame){
     // Re-assert stream-on directly over this socket so the stream self-heals quickly.
     liveSend({cmd:'stream',on:true});
     if(liveStreamTimer) clearInterval(liveStreamTimer);
-    liveStreamTimer = setInterval(()=>{ if(liveWs && liveWs.readyState===1) liveSend({cmd:'stream',on:true}); }, 5000);
+    liveStreamTimer = setInterval(()=>{ if(liveWs && liveWs.readyState===1) liveSend({cmd:'stream',on:true}); }, 2500);
     if(liveQualityTimer) clearInterval(liveQualityTimer);
     liveQualityTimer = setInterval(()=>{ if(liveWs && liveWs.readyState===1) applyQuality(true); }, 10000);
     if(liveKeepAlive) clearInterval(liveKeepAlive);
@@ -842,7 +835,7 @@ const liveStageEl = $('#liveStage');
 liveStageEl.addEventListener('mousemove', e => {
   if(fromTouch(e) || !controlOn) return;
   const now = performance.now();
-  if(now - lastMoveSent < 40) return;   // 25 moves/s: smooth, without flooding the command socket
+  if(now - lastMoveSent < 16) return;
   lastMoveSent = now;
   const p = liveNorm(e);
   liveSend({ cmd:'input', kind:'move', x:p.x, y:p.y });
@@ -896,7 +889,7 @@ $('#liveImg').addEventListener('pointermove', e => {
   e.preventDefault();
   if(Math.hypot(e.clientX - touchStart.cx, e.clientY - touchStart.cy) > 8) touchStart.moved = true;
   const now = performance.now();
-  if(now - lastTouchMove < 60) return;
+  if(now - lastTouchMove < 32) return;
   lastTouchMove = now;
   const p = liveNorm(e);
   touchSend({ cmd:'input', kind:'move', x:p.x, y:p.y });
