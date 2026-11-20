@@ -765,9 +765,13 @@ public sealed class Collector : BackgroundService
                         _savedQuality = _liveQuality;
                         _savedInterval = _liveIntervalMs;
                         _controlQualitySaved = true;
+                        // Native width avoids a costly StretchBlt on integrated GPUs. Only the
+                        // JPEG cost/bytes are eased here: on a slow uplink full-res q60 frames
+                        // queued up and the picture looked choppy even at 50 ms. AdaptLive()
+                        // stays off during control so the preset never shifts mid-session.
                         _liveWidth = 4096;      // >= screen width => no StretchBlt
-                        _liveQuality = 60;
-                        _liveIntervalMs = 50;   // ~15-20 fps while the mouse is being driven
+                        _liveQuality = 50;      // lighter JPEG: faster encode, fewer bytes
+                        _liveIntervalMs = 60;   // ~16 fps with headroom for the upload
                         _hashValid = false;
                     }
                     _controlOn = true;
