@@ -436,7 +436,7 @@ let liveRealFrameSeen = false;
 const LADDER = [
   { w: 480,  q: 32, ms: 100 },   // 0 - very low bandwidth (few KB/s)
   { w: 640,  q: 40, ms: 80  },   // 1
-  { w: 1600, q: 58, ms: 60  },   // 2 - smooth default: native width (no slow StretchBlt), sharp q58
+  { w: 720,  q: 38, ms: 60  },   // 2 - smooth default: kal wala known-good preset (uplink chhota = SendAsync block nahi karta)
   { w: 960,  q: 48, ms: 60  },   // 3
   { w: 1280, q: 58, ms: 80  },   // 4
   { w: 1600, q: 72, ms: 100 },   // 5 - Full HD
@@ -655,11 +655,15 @@ function stopLive(keepFrame){
 // to use close karke doosri path try karwata hai.
 function liveHeal(){
   if(!liveDevice || liveStopped) return;
-  const dead = !liveWs || liveWs.readyState > 1 || (Date.now() - liveLastFrameAt > 8000);
+  const stale = Date.now() - liveLastFrameAt > 8000;
+  const dead = !liveWs || liveWs.readyState > 1 || stale;
   if(!dead) return;
-  if(liveRetry){ clearTimeout(liveRetry); liveRetry=null; }
-  if(liveWs){ try{ liveWs.close(); }catch(e){} }   // onclose handled reconnect
-  else startLive(true);
+  // Purana tareeqa yahan tha: pending retry cancel karke old socket.close() par bharosa karta tha.
+  // Agar socket pehle se CLOSED hota to close() no-op hai aur onclose dobara nahi aata ->
+  // reconnect schedule hi nahi hota aur screen hamesha ke liye ruk jati thi. Ab seedha
+  // startLive(true) bulata hai (wo apne purane timers/socket khud saaf karke naya kholta hai).
+  if(stale && liveWsBases().length > 1) wsPathIndex++;   // ye route frame nahi de raha - doosra try karo
+  startLive(true);
 }
 window.addEventListener('online', liveHeal);
 document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) liveHeal(); });
