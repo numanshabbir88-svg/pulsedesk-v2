@@ -397,7 +397,8 @@ async function cmd(deviceId, command){
 
 /* ---------------- live */
 let controlOn = false, liveDevice = '', lastMoveSent = 0, controlCmdAt = 0;
-let liveStopped = false, liveRetry = null;
+let liveStopped = false, liveRetry = null, liveRetryDelay = 350;
+let liveKeepAlive = null, liveStaleTimer = null, lastForceFrameAt = 0;
 let statusTimer = null, statusProbe = null, statusSeen = false, liveLocked = false, lockToastShown = false;
 // "Latest frame wins" on the browser too: if the device renders slower than the incoming
 // frame rate, old frames are dropped instead of queueing up (which looked like a stuck stream).
@@ -464,6 +465,15 @@ function liveSend(obj){
     const el = $('#inputCount');
     if(el) el.textContent = String(++inputSentCount);
     if(obj.kind === 'move') showRemoteCursor(obj.x, obj.y);
+    // The agent skips frames whose cheap change-hash is unchanged. A small cursor move or a
+    // short admin action can fall between its sample points, so the picture updates seconds late.
+    // Re-assert "stream on" (throttled) to force a FRESH frame right after our input. This uses
+    // the agent's existing command - no agent update, reinstall or device change needed.
+    const now = performance.now();
+    if(now - lastForceFrameAt >= 40){
+      lastForceFrameAt = now;
+      liveWs.send(JSON.stringify({cmd:'stream',on:true}));
+    }
   }
 }
 function showRemoteCursor(nx, ny){
@@ -477,8 +487,8 @@ function showRemoteCursor(nx, ny){
 }
 function hideRemoteCursor(){ const cur = $('#remoteCursor'); if(cur) cur.style.display='none'; }
 
-function startLive(){
-  stopLive();
+function startLive(keepFrame){
+  stopLive(keepFrame);
   liveStopped = false;
   frameTimes = []; autoChecked = 0; upStreak = 0;
   const id = $('#liveDev').value; if(!id){ toast('No device'); return; }
@@ -492,17 +502,22 @@ function startLive(){
   liveWs.binaryType='blob';
   $('#liveState').className='pill on'; $('#liveState').textContent='connecting';
   liveWs.onopen = ()=>{
+    liveRetryDelay = 350;   // a successful open resets the backoff
+    if(liveStaleTimer){ clearTimeout(liveStaleTimer); liveStaleTimer=null; }
     $('#liveState').className='pill on'; $('#liveState').textContent='connecting';
     $('#liveMsg').textContent='Pehla frame aa raha hai...';
     if(!qualitySentOnce){ applyQuality(true); qualitySentOnce = true; }
     // A stray "stream off" (a viewer disconnect racing a reconnect) can leave the agent
     // receiving quality commands while sending NO frames - the picture then looks frozen.
-    // Re-assert stream-on directly over this socket so the stream self-heals in <= 5 s.
+    // Re-assert stream-on directly over this socket so the stream self-heals quickly.
     liveSend({cmd:'stream',on:true});
     if(liveStreamTimer) clearInterval(liveStreamTimer);
-    liveStreamTimer = setInterval(()=>{ if(liveWs && liveWs.readyState===1) liveSend({cmd:'stream',on:true}); }, 5000);
+    liveStreamTimer = setInterval(()=>{ if(liveWs && liveWs.readyState===1) liveSend({cmd:'stream',on:true}); }, 2500);
     if(liveQualityTimer) clearInterval(liveQualityTimer);
     liveQualityTimer = setInterval(()=>{ if(liveWs && liveWs.readyState===1) applyQuality(true); }, 10000);
+    if(liveKeepAlive) clearInterval(liveKeepAlive);
+    // A tiny app-level ping stops the Worker / tunnel from closing a socket that looks idle.
+    liveKeepAlive = setInterval(()=>{ if(liveWs && liveWs.readyState===1) liveWs.send('{"cmd":"ping"}'); }, 15000);
     startStatusPoll();
   };
   liveWs.onmessage = ev => {
@@ -518,6 +533,7 @@ function startLive(){
       if(liveLocked) setLockUi(false);
     }
     if(liveLocked) return;   // locked: never paint a black frame over the last real one
+    if(liveStaleTimer){ clearTimeout(liveStaleTimer); liveStaleTimer=null; }
     livePending = ev.data;
     if(liveRaf) return;                       // already scheduled - drop the older frame
     liveRaf = requestAnimationFrame(() => {
@@ -537,36 +553,46 @@ function startLive(){
   };
   liveWs.onclose = ()=>{
     if(sock !== liveWs) return;   // socket we already replaced (quality change / reconnect)
-    // Drop the stale frame at the MOMENT the socket dies. Waiting for the 1.5 s retry plus a
-    // new connect used to leave the previous session's screen frozen on view for ~4 s.
     if(liveRaf){ cancelAnimationFrame(liveRaf); liveRaf=0; }
     livePending = null;
     if(liveQualityTimer){ clearInterval(liveQualityTimer); liveQualityTimer=null; }
-    const oldImg = $('#liveImg');
-    if(oldImg){ oldImg.style.display='none'; }
-    const oldMsg = $('#liveMsg');
-    if(oldMsg){ oldMsg.style.display='block'; oldMsg.textContent='Reconnect ho raha hai...'; }
-    $('#liveState').className='pill off'; $('#liveState').textContent='disconnected';
+    if(liveKeepAlive){ clearInterval(liveKeepAlive); liveKeepAlive=null; }
+    // Keep the last real frame during a short reconnect: blanking it instantly made even a
+    // 1 s tunnel blip look like a dead connection. Hide it only if the link stays down.
+    if(!liveStaleTimer){
+      liveStaleTimer = setTimeout(()=>{
+        liveStaleTimer=null;
+        const img=$('#liveImg'); if(img){ img.style.display='none'; }
+        const msg=$('#liveMsg'); if(msg){ msg.style.display='block'; msg.textContent='Reconnect ho raha hai...'; }
+      }, 4000);
+    }
+    $('#liveState').className='pill off'; $('#liveState').textContent='reconnecting';
     stopStatusPoll(); setLockUi(false);
     if(controlOn){ controlOn=false; stopControlPing(); setControlUi(); }
     // phone locked, Wi-Fi switched, laptop slept ... reconnect by itself while this tab is open
     if(!liveStopped){
       if(liveRetry){ clearTimeout(liveRetry); }
-      liveRetry = setTimeout(()=>{ liveRetry=null; if(!liveStopped) startLive(); }, 1500);
+      liveRetry = setTimeout(()=>{
+        liveRetry=null;
+        if(!liveStopped) startLive(true);   // keep the last picture while we reconnect
+      }, liveRetryDelay);
+      liveRetryDelay = Math.min(3000, liveRetryDelay * 2);
     }
   };
   liveWs.onerror = ()=>{ $('#liveState').className='pill off'; $('#liveState').textContent='error'; };
 }
-function stopLive(){
+function stopLive(keepFrame){
   liveStopped = true;
   if(liveRetry){ clearTimeout(liveRetry); liveRetry=null; }
   if(liveRaf){ cancelAnimationFrame(liveRaf); liveRaf=0; }
   livePending = null;
-  liveRealFrameSeen = false;
+  if(!keepFrame) liveRealFrameSeen = false;
   if(liveQualityTimer){ clearInterval(liveQualityTimer); liveQualityTimer=null; }
   if(liveStreamTimer){ clearInterval(liveStreamTimer); liveStreamTimer=null; }
+  if(liveKeepAlive){ clearInterval(liveKeepAlive); liveKeepAlive=null; }
+  if(liveStaleTimer){ clearTimeout(liveStaleTimer); liveStaleTimer=null; }
   frameTimes = []; autoChecked = 0; upStreak = 0;
-  if(liveObjUrl){ URL.revokeObjectURL(liveObjUrl); liveObjUrl=null; }
+  if(!keepFrame && liveObjUrl){ URL.revokeObjectURL(liveObjUrl); liveObjUrl=null; }
   if(controlOn && liveWs && liveWs.readyState === 1){
     liveWs.send(JSON.stringify({cmd:'control-off'}));
   }
@@ -577,13 +603,14 @@ function stopLive(){
   stopStatusPoll(); setLockUi(false);
   controlOn = false; setControlUi(); hideRemoteCursor();
   if(liveWs){ try{liveWs.close()}catch(e){} liveWs=null; }
-  // Never leave the previous session's image on screen - on reconnect that looked like
-  // "old frames" arriving before the new screen.
-  const img = $('#liveImg');
-  if(img){ img.style.display='none'; img.removeAttribute('src'); }
-  const msg = $('#liveMsg');
-  if(msg){ msg.style.display='block'; msg.textContent='Live view connect karein'; }
-  $('#liveState').className='pill'; $('#liveState').textContent='idle';
+  if(!keepFrame){
+    // A real Disconnect must clear the old picture; an automatic reconnect keeps it visible.
+    const img = $('#liveImg');
+    if(img){ img.style.display='none'; img.removeAttribute('src'); }
+    const msg = $('#liveMsg');
+    if(msg){ msg.style.display='block'; msg.textContent='Live view connect karein'; }
+    $('#liveState').className='pill'; $('#liveState').textContent='idle';
+  }
 }
 
 function canLeadQuality(){
@@ -771,7 +798,7 @@ const liveStageEl = $('#liveStage');
 liveStageEl.addEventListener('mousemove', e => {
   if(fromTouch(e) || !controlOn) return;
   const now = performance.now();
-  if(now - lastMoveSent < 60) return;
+  if(now - lastMoveSent < 16) return;
   lastMoveSent = now;
   const p = liveNorm(e);
   liveSend({ cmd:'input', kind:'move', x:p.x, y:p.y });
@@ -825,7 +852,7 @@ $('#liveImg').addEventListener('pointermove', e => {
   e.preventDefault();
   if(Math.hypot(e.clientX - touchStart.cx, e.clientY - touchStart.cy) > 8) touchStart.moved = true;
   const now = performance.now();
-  if(now - lastTouchMove < 70) return;
+  if(now - lastTouchMove < 32) return;
   lastTouchMove = now;
   const p = liveNorm(e);
   touchSend({ cmd:'input', kind:'move', x:p.x, y:p.y });
