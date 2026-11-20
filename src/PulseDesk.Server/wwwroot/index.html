@@ -737,14 +737,13 @@ function handleAgentText(raw){
       lockState[liveDevice] = !!m.locked;   // also shown in the device list
       const p = $('#agentPill'); if(p) p.style.display = 'none';
       setLockUi(!!m.locked);
-      // The agent is the source of truth for the employee input lock. If its safety watchdog
-      // released control (no heartbeat / WS drop), the button must not keep saying "Stop
-      // control" while the employee is already unlocked - that desync broke repeat tests.
-      if(typeof m.control === 'boolean' && Date.now() - controlCmdAt > 2000 && m.control !== controlOn){
-        controlOn = m.control;
-        if(controlOn) startControlPing(); else stopControlPing();
-        setControlUi();
-        if(!controlOn) toast('Remote control agent ki taraf se band ho gaya - employee input wapas active');
+      // Status sirf SAFETY ke liye control band kar sakta hai (agent ne input chhod diya).
+      // Kabhi apne aap control ON nahi karta: ek purana/queued status "control:true" Stop
+      // dabane ke baad button ko wapas ON kar deta tha. ON sirf explicit button se hota hai.
+      if(typeof m.control === 'boolean' && m.control === false && controlOn &&
+         Date.now() - controlCmdAt > 2000){
+        controlOn = false; stopControlPing(); setControlUi();
+        toast('Remote control agent ki taraf se band ho gaya - employee input wapas active');
       }
     }
   }catch(e){}
@@ -812,10 +811,23 @@ async function toggleControl(){
     }
   }
   controlCmdAt = Date.now();
+  // Stop: pehle 8s ka controlPing aur local state BAND karo, warna ping ka control-on
+  // HTTP control-off se late hokar agent ko wapas ON kar deta tha (button glitch).
+  if(!next){
+    stopControlPing();
+    controlOn = false;
+    setControlUi();
+    liveSend({cmd:'control-off'});   // active WS par bhi bhejo - HTTP se zyada direct
+  }
   try{
     await cmd(liveDevice, next ? 'control-on' : 'control-off');
     controlOn = next;
-    if(next) startControlPing(); else stopControlPing();
+    if(next) startControlPing();
+    else {
+      stopControlPing();
+      // In-flight control-on ko pitne ke liye ek chota doosra off (sirf tab jab user ne Stop kiya ho).
+      setTimeout(()=>{ if(!controlOn) liveSend({cmd:'control-off'}); }, 500);
+    }
     setControlUi();
     $('#liveStage').focus();
     if(next && !statusSeen){
