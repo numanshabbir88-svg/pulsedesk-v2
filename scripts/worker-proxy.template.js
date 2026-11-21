@@ -99,6 +99,45 @@ async function cachedFetch(request, url, init, event) {
   }
 }
 
+// --- resilient upstream fetch ---------------------------------------------------------------
+// Cloudflare -> Tailscale Funnel sometimes reuses a stale pooled socket or returns a transient
+// 502/503. A single fetch() then hangs until the client gives up, which is exactly why the
+// admin UI logged in one moment and "would not connect" the next even though the origin was
+// healthy (direct login ~94 ms). We retry a few times with a hard per-attempt timeout and force
+// a FRESH connection after the first failure. Every HTTP call routed through here (login,
+// devices, stream/control/lock commands, frame upload) is idempotent, so replaying is safe.
+const RETRY_HTTP = new Set([429, 502, 503, 504]);
+function retryableError(err) {
+  const s = String((err && (err.message || err.name)) || err);
+  return /abort|timeout|timed.?out|network|socket|keep.?alive|closed|reset|econn|fetch failed|gateway/i.test(s);
+}
+
+async function resilientFetch(url, baseInit) {
+  const attempts = 3;
+  const timeoutMs = 8000;
+  let last;
+  for (let i = 0; i < attempts; i++) {
+    const headers = new Headers(baseInit.headers);
+    if (i > 0) headers.set('Connection', 'close'); // drop the stale pooled socket, open a new one
+    const init = Object.assign({}, baseInit, { headers });
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, Object.assign({ signal: ctrl.signal }, init));
+      clearTimeout(timer);
+      if (!RETRY_HTTP.has(res.status)) return res;   // includes 401/404 -> do not replay
+      last = new Error('upstream HTTP ' + res.status);
+      try { if (res.body) await res.body.cancel(); } catch (e) {} // free the socket before retry
+    } catch (e) {
+      clearTimeout(timer);
+      last = e;
+      if (!retryableError(e)) throw e;
+    }
+    if (i < attempts - 1) await new Promise(r => setTimeout(r, 120 * (i + 1)));
+  }
+  throw last;
+}
+
 async function proxy(request, event) {
   const url = originUrl(request);
   if ((request.headers.get('Upgrade') || '').toLowerCase() === 'websocket')
@@ -121,11 +160,14 @@ async function proxy(request, event) {
     headers,
     redirect: 'manual', // preserve the origin's 301/302 instead of leaking its hostname
   };
-  if (request.method !== 'GET' && request.method !== 'HEAD') {
-    init.body = request.body;
+  // Buffer the body once: a ReadableStream can only be consumed by a single fetch, but we may
+  // need to replay it if the first attempt hits a stale Funnel socket. These bodies are small
+  // (JSON commands / screenshots); the 66 MB download is a GET with no body.
+  if (request.method !== 'GET' && request.method !== 'HEAD' && request.body) {
+    init.body = await request.arrayBuffer();
   }
 
   // Returning the response directly streams the 66 MB download (including 206/Range replies).
   if (isCacheable(request)) return cachedFetch(request, url, init, event);
-  return fetch(url, init);
+  return resilientFetch(url, init);
 }
