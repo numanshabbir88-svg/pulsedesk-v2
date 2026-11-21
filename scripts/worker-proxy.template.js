@@ -37,33 +37,55 @@ async function proxyWebSocket(request, url) {
   // the Workers WebSocket client connects to the tunnel cleanly. Bridge it to the browser
   // socket explicitly so admin clicks and agent JPEGs actually flow both ways.
   const wsUrl = url.replace(/^https:/i, 'wss:').replace(/^http:/i, 'ws:');
-  const upstream = new WebSocket(wsUrl);
+
+  // Do NOT accept the browser/agent socket before the upstream tunnel socket is really open.
+  // The old code returned 101 immediately; a dead Funnel path then closed the pair later. An
+  // installed agent treats that as a connected-then-dropped socket and retries the SAME host
+  // forever, never reaching the direct-origin endpoint in its fallback list. Failing the
+  // handshake instead (502) makes it advance to the next endpoint and reconnect by itself.
+  let upstream;
+  try {
+    upstream = new WebSocket(wsUrl);
+  } catch (e) {
+    return new Response('upstream websocket unavailable', { status: 502 });
+  }
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => finish(new Error('upstream websocket timeout')), 5000);
+    function finish(err) {
+      clearTimeout(timer);
+      upstream.removeEventListener('open', onOpen);
+      upstream.removeEventListener('error', onError);
+      upstream.removeEventListener('close', onClose);
+      if (err) reject(err); else resolve();
+    }
+    function onOpen() { finish(); }
+    function onError() { finish(new Error('upstream websocket error')); }
+    function onClose() { finish(new Error('upstream websocket closed')); }
+    upstream.addEventListener('open', onOpen, { once: true });
+    upstream.addEventListener('error', onError, { once: true });
+    upstream.addEventListener('close', onClose, { once: true });
+  }).catch(() => {
+    try { upstream.close(); } catch (e) {}
+    return null;
+  });
+  if (!upstream || upstream.readyState !== 1)
+    return new Response('upstream websocket unavailable', { status: 502 });
 
   const pair = new WebSocketPair();
   const client = pair[0];     // returned to the browser
   const downstream = pair[1]; // handled here
   downstream.accept({ allowHalfOpen: true });
 
-  // The browser's onopen fires as soon as we accept the client, which is before
-  // the upstream tunnel socket finishes connecting. Command frames sent in that window (the
-  // initial {"cmd":"status"} probe and stream/control commands) used to be dropped, producing
-  // a false "AGENT OLD" pill and lost control commands. Queue them and flush once upstream is open.
-  const pending = [];
-  upstream.addEventListener('open', () => {
-    for (const m of pending) sendTo(upstream, m);
-    pending.length = 0;
-  });
+  // Now that upstream is open, messages can be relayed immediately; no pending queue needed.
   upstream.addEventListener('message', e => sendTo(downstream, e.data));
   downstream.addEventListener('message', e => {
     if (upstream.readyState === 1) sendTo(upstream, e.data);
-    else pending.push(e.data);
   });
-  upstream.addEventListener('close', () => { pending.length = 0; try { downstream.close(); } catch (e) {} });
+  upstream.addEventListener('close', () => { try { downstream.close(); } catch (e) {} });
   downstream.addEventListener('close', () => { try { upstream.close(); } catch (e) {} });
-  upstream.addEventListener('error', () => { pending.length = 0; try { downstream.close(); } catch (e) {} });
+  upstream.addEventListener('error', () => { try { downstream.close(); } catch (e) {} });
   downstream.addEventListener('error', () => { try { upstream.close(); } catch (e) {} });
 
-  // Returning immediately lets the handshake finish while the upstream socket connects.
   return new Response(null, { status: 101, webSocket: client });
 }
 
