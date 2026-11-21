@@ -111,7 +111,13 @@ function Ensure-FunnelOrigin {
     $cur = Get-OriginUrl
     $hash = Get-WorkerSourceHash
     $oldHash = if (Test-Path $deployHashFile) { (Get-Content $deployHashFile -Raw -EA SilentlyContinue).Trim() } else { '' }
-    $needDeploy = ($cur -ne $funnelOrigin) -or ($hash -ne $oldHash)
+    # The worker embeds a short-lived admin token (12 h) + devices snapshot so fresh tabs can log
+    # in during a Cloudflare->Funnel outage. Refresh it every 6 h while the source is unchanged.
+    $seedStale = $true
+    if (Test-Path $deployHashFile) {
+        $seedStale = (((Get-Date) - (Get-Item $deployHashFile).LastWriteTime).TotalHours -ge 6)
+    }
+    $needDeploy = ($cur -ne $funnelOrigin) -or ($hash -ne $oldHash) -or $seedStale
     if (-not $needDeploy) {
         if (-not (Test-UrlFast $funnelOrigin)) {
             Log "funnel origin slow/down ($funnelOrigin) - Tailscale will reconnect; no tunnel churn"
@@ -119,7 +125,8 @@ function Ensure-FunnelOrigin {
         return
     }
     if ($cur -ne $funnelOrigin) { Log "worker origin drifted ($cur) -> pinning to Funnel $funnelOrigin" }
-    else { Log "worker source changed (UI/template/deploy script) -> redeploying" }
+    elseif ($hash -ne $oldHash) { Log "worker source changed (UI/template/deploy script) -> redeploying" }
+    else { Log "worker token seed older than 6h -> redeploying to refresh it" }
     # Keep BOTH free public hostnames on the same origin. New setups embed both, so a laptop
     # blocked on one hostname can enroll/stream through the other; old devices are untouched.
     if ((Deploy-Worker $funnelOrigin 'pulsedesk') -and (Deploy-Worker $funnelOrigin 'pdsbackup')) {

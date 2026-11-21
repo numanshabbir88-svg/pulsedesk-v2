@@ -99,6 +99,115 @@ async function cachedFetch(request, url, init, event) {
   }
 }
 
+// --- login fallback ---------------------------------------------------------------------------
+// When the Funnel path is wedged a fresh admin tab cannot even log in. Remember the token from
+// the last REAL login, keyed by a SHA-256 of the password (never stored in plaintext or sent
+// anywhere). A correct password then still works during an outage; the token remains valid in
+// the server's memory because its/login session was already established upstream.
+// Seeded at deploy time from the fast DIRECT origin so a fresh tab can log in even if the
+// Cloudflare -> Funnel path is wedged right after a redeploy. Empty when seeding was impossible.
+const SEED_HASH = "__SEED_HASH__";
+const SEED_TOKEN = "__SEED_TOKEN__";
+// Last-known devices snapshot from the fast origin, embedded at deploy time. Used ONLY when the
+// upstream is wedged and no live cache exists, so a fresh admin tab can still see/select devices.
+const SEED_DEVICES = __SEED_DEVICES__;
+// NOTE: Date.now() returns 0 at module scope in Workers, so the seeded timestamp is set lazily
+// inside the first request (see loginWithCache). A zero ts made the age check always fail.
+let loginCache = SEED_TOKEN ? { hash: SEED_HASH, token: SEED_TOKEN, ts: 0 } : null; // { hash, token, ts }
+
+async function sha256hex(text) {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(d)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function loginWithCache(bodyBuf, url, init) {
+  let hash = null;
+  try {
+    const obj = JSON.parse(new TextDecoder().decode(bodyBuf || new ArrayBuffer(0)));
+    hash = await sha256hex(String(obj.password || ''));
+  } catch (e) {}
+  // Workers report Date.now() === 0 during module init; stamp the seeded cache on first real use.
+  if (loginCache && !loginCache.ts) loginCache.ts = Date.now();
+  const cached = (loginCache && hash && loginCache.hash === hash) ? loginCache : null;
+  if (cached && Date.now() - cached.ts < 11.5 * 3600 * 1000) {
+    return new Response(JSON.stringify({ ok: true, token: cached.token }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json; charset=utf-8', 'X-PDS-Cache': 'login' }
+    });
+  }
+  const res = await resilientFetch(url, init);
+  if (res.ok) {
+    try {
+      const j = await res.clone().json();
+      if (j && j.ok && j.token) loginCache = { hash, token: j.token, ts: Date.now() };
+    } catch (e) {}
+  }
+  return res;
+}
+
+// --- stale-while-revalidate for read-only admin API -----------------------------------------
+// The Cloudflare -> Funnel path sometimes wedges for minutes. A logged-in admin tab already has
+// a token, so its GET calls (devices, summary, alerts, ...) can be answered from a short-lived
+// edge cache while a background refresh retries upstream. This keeps the panel usable - and the
+// WS (already pinned to the fast origin) can connect - during an API outage. POST commands are
+// NEVER cached and always go upstream.
+const apiMemCache = new Map();          // key -> { ts, status, ctype, body }
+const API_FRESH_MS = 3000;              // newer than this: serve directly
+const API_STALE_MS = 10 * 60 * 1000;    // older than this: drop it (avoid indefinitely wrong data)
+
+function apiCacheKey(request) {
+  const tok = request.headers.get('X-Admin-Token') || '';
+  return request.url + '|' + tok.slice(0, 12);
+}
+function cachedResponse(e) {
+  return new Response(e.body, {
+    status: e.status,
+    headers: { 'Content-Type': e.ctype || 'application/json; charset=utf-8', 'X-PDS-Cache': 'hit' }
+  });
+}
+async function refreshApi(key, url, init, event) {
+  const res = await resilientFetch(url, init);
+  // Token rejected (e.g. server restarted): drop cached data AND the login fallback so the UI
+  // does not loop forever on a token the server no longer knows.
+  if (res.status === 401) { loginCache = null; apiMemCache.clear(); }
+  if (res.ok) {
+    const ctype = res.headers.get('content-type') || 'application/json; charset=utf-8';
+    const body = await res.arrayBuffer();
+    apiMemCache.set(key, { ts: Date.now(), status: res.status, ctype, body });
+    return cachedResponse({ status: res.status, ctype, body });
+  }
+  return res;
+}
+async function apiGet(request, url, init, event) {
+  const key = apiCacheKey(request);
+  const hit = apiMemCache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.ts <= API_STALE_MS) {
+    if (now - hit.ts <= API_FRESH_MS) return cachedResponse(hit);
+    // Stale but still useful: return instantly, refresh in the background.
+    event.waitUntil(refreshApi(key, url, init, event).catch(() => {}));
+    return cachedResponse(hit);
+  }
+  if (hit) apiMemCache.delete(key);
+  // Cold worker + wedged Funnel path: prime the cache with the deploy-time devices snapshot and
+  // return it INSTANTLY (a fresh tab must not wait 7 s to pick a device). Refresh in background;
+  // the next poll sees live data. WS already goes straight to the fast origin.
+  if (SEED_DEVICES && new URL(request.url).pathname.endsWith('/api/admin/devices')) {
+    apiMemCache.set(key, { ts: Date.now(), status: 200, ctype: 'application/json; charset=utf-8', body: SEED_DEVICES });
+    event.waitUntil(refreshApi(key, url, init, event).catch(() => {}));
+    return new Response(SEED_DEVICES, {
+      status: 200,
+      headers: { 'Content-Type': 'application/json; charset=utf-8', 'X-PDS-Cache': 'seed' }
+    });
+  }
+  try {
+    return await refreshApi(key, url, init, event);
+  } catch (e) {
+    if (hit) return cachedResponse(hit);  // upstream down and cache just expired: last resort
+    throw e;
+  }
+}
+
 // --- resilient upstream fetch ---------------------------------------------------------------
 // Cloudflare -> Tailscale Funnel sometimes reuses a stale pooled socket or returns a transient
 // 502/503. A single fetch() then hangs until the client gives up, which is exactly why the
@@ -171,6 +280,16 @@ async function proxy(request, event) {
   if (request.method !== 'GET' && request.method !== 'HEAD' && request.body) {
     init.body = await request.arrayBuffer();
   }
+
+  // Login fallback: a cached token for this exact password keeps new tabs working during an
+  // upstream outage. Only reached after the server has answered a real login at least once.
+  if (request.method === 'POST' && path === '/api/admin/login')
+    return loginWithCache(init.body, url, init);
+
+  // Read-only admin API: serve from short-lived edge cache, refresh in background. This is what
+  // keeps the panel usable when the Funnel path wedges (POST commands still go upstream live).
+  if (request.method === 'GET' && path.startsWith('/api/'))
+    return apiGet(request, url, init, event);
 
   // Returning the response directly streams the 66 MB download (including 206/Range replies).
   if (isCacheable(request)) return cachedFetch(request, url, init, event);

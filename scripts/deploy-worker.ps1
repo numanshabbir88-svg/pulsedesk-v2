@@ -36,7 +36,36 @@ try { $ver = ([System.BitConverter]::ToString($sha.ComputeHash([System.Text.Enco
 $inject = "<script>window.PDS_WS_BASE='$wsBase/';(function(){try{var v='$ver';if(localStorage.getItem('pdsUiVer')!==v){localStorage.setItem('pdsUiVer',v);location.reload();}}catch(e){}})();</script>"
 $html = $html.Replace('<head>', "<head>$inject")
 $embedded = $html | ConvertTo-Json -Compress -Depth 5
-$js = (Get-Content $template -Raw).Replace('__ORIGIN__', $Origin.TrimEnd('/')).Replace('__EMBEDDED_INDEX__', $embedded)
+
+# Seed the worker's login fallback using the DIRECT origin (fast and reachable from this machine
+# even when Cloudflare -> Funnel is wedged). Only a password hash and the short-lived token are
+# injected into the DEPLOYED script; nothing is printed, committed or stored in a file.
+$seedHash = ''
+$seedToken = ''
+$seedDevices = '""'   # JS string literal for an empty string
+try {
+    $cfgPath = Join-Path $root 'dist\server\appsettings.json'
+    $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
+    $pw = [string]$cfg.AdminPassword
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $seedHash = ([System.BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($pw))).Replace('-', '')).ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    $seedLogin = Invoke-RestMethod -Method Post -Uri "$($Origin.TrimEnd('/'))/api/admin/login" -TimeoutSec 15 `
+                    -ContentType 'application/json' -Body (@{ password = $pw } | ConvertTo-Json)
+    if ($seedLogin.token) { $seedToken = [string]$seedLogin.token }
+    # Snapshot the device list with that token so the worker can serve it if the tunnel wedges.
+    # ConvertTo-Json turns the raw JSON into a safe JS string literal (quotes/escapes handled).
+    $devRaw = (Invoke-WebRequest -Uri "$($Origin.TrimEnd('/'))/api/admin/devices" -TimeoutSec 15 `
+                -Headers @{ 'X-Admin-Token' = $seedToken } -UseBasicParsing).Content
+    if ($devRaw) { $seedDevices = $devRaw | ConvertTo-Json -Compress }
+} catch { Write-Warning "login/device seed skipped (worker will learn it on first real login): $($_.Exception.Message)" }
+
+$js = Get-Content $template -Raw
+$js = $js.Replace('__ORIGIN__', $Origin.TrimEnd('/'))
+$js = $js.Replace('__EMBEDDED_INDEX__', $embedded)
+$js = $js.Replace('__SEED_HASH__', $seedHash)
+$js = $js.Replace('__SEED_TOKEN__', $seedToken)
+$js = $js.Replace('__SEED_DEVICES__', $seedDevices)
 $api = "https://api.cloudflare.com/client/v4/accounts/$accountId/workers/scripts/$ScriptName"
 
 $r = Invoke-RestMethod -Method Put -Uri $api -Headers $h -Body $js -TimeoutSec 180
