@@ -689,14 +689,21 @@ function stopLive(keepFrame){
 // to use close karke doosri path try karwata hai.
 function liveHeal(){
   if(!liveDevice || liveStopped) return;
-  const stale = Date.now() - liveLastFrameAt > 8000;
+  // A socket that has ALREADY delivered frames is working - it can legitimately pause 8-12 s
+  // when the employee laptop is idle or the uplink is slow. The old 8 s rule called that
+  // "stale", switched to the worker path (which delivers 0 frames) and the picture froze in a
+  // reconnect loop. Only switch routes when this socket NEVER produced a frame; otherwise
+  // just wait longer before restarting the same working route.
+  const hadFrames = liveFramesOnSocket > 0;
+  const limit = hadFrames ? 30000 : 20000;
+  const stale = Date.now() - liveLastFrameAt > limit;
   const dead = !liveWs || liveWs.readyState > 1 || stale;
   if(!dead) return;
   // Purana tareeqa yahan tha: pending retry cancel karke old socket.close() par bharosa karta tha.
   // Agar socket pehle se CLOSED hota to close() no-op hai aur onclose dobara nahi aata ->
   // reconnect schedule hi nahi hota aur screen hamesha ke liye ruk jati thi. Ab seedha
   // startLive(true) bulata hai (wo apne purane timers/socket khud saaf karke naya kholta hai).
-  if(stale && liveWsBases().length > 1) wsPathIndex++;   // ye route frame nahi de raha - doosra try karo
+  if(stale && !hadFrames && liveWsBases().length > 1) wsPathIndex++; // kisi ne frame nahi diya - doosri path
   startLive(true);
 }
 window.addEventListener('online', liveHeal);
