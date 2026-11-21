@@ -276,8 +276,16 @@ async function resilientFetch(url, baseInit) {
 
 async function proxy(request, event) {
   const url = originUrl(request);
-  if ((request.headers.get('Upgrade') || '').toLowerCase() === 'websocket')
+  if ((request.headers.get('Upgrade') || '').toLowerCase() === 'websocket') {
+    // Agent sockets over the Worker hop are unreliable: Cloudflare accepts the client side,
+    // then the Funnel leg can die later. The installed agent treats that as a connected-then-
+    // dropped socket and retries the SAME host forever, so it never reaches the direct origin
+    // in its fallback list. Refuse agent WS upgrades; the agent then advances in ~3 s and stays
+    // on the fast direct Funnel URL. HTTP enrollment/download/login still use this stable URL.
+    if (new URL(request.url).pathname.endsWith('/ws/agent'))
+      return new Response('agent websocket unavailable', { status: 502 });
     return proxyWebSocket(request, url);
+  }
 
   // Serve the admin console straight from the Worker: no tunnel round trip, instant on any colo.
   const path = new URL(request.url).pathname;
