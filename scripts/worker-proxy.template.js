@@ -113,12 +113,17 @@ function retryableError(err) {
 }
 
 async function resilientFetch(url, baseInit) {
-  const attempts = 3;
-  const timeoutMs = 8000;
+  // Fail FAST. Cloudflare's pooled socket to the Funnel can stay wedged; three long attempts
+  // used to burn 24 s and then return 500. The browser now retries on 5xx/network errors with
+  // its own fresh connection, so a short attempt budget here recovers far quicker.
+  const attempts = 2;
+  const timeoutMs = 3500;
   let last;
   for (let i = 0; i < attempts; i++) {
     const headers = new Headers(baseInit.headers);
-    if (i > 0) headers.set('Connection', 'close'); // drop the stale pooled socket, open a new one
+    // Note: Workers ignore hop-by-hop Connection headers (CF manages pooling itself), so this
+    // is kept only as a hint. Real recovery is the short timeout + browser-side 5xx retry.
+    headers.set('Connection', 'close');
     const init = Object.assign({}, baseInit, { headers });
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
