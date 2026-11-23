@@ -35,7 +35,11 @@ $sha = [System.Security.Cryptography.SHA256]::Create()
 try { $ver = ([System.BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($html))).Replace('-', '')).Substring(0, 8) } finally { $sha.Dispose() }
 $inject = "<script>window.PDS_WS_BASE='$wsBase/';(function(){try{var v='$ver';if(localStorage.getItem('pdsUiVer')!==v){localStorage.setItem('pdsUiVer',v);location.reload();}}catch(e){}})();</script>"
 $html = $html.Replace('<head>', "<head>$inject")
-$embedded = $html | ConvertTo-Json -Compress -Depth 5
+# Windows PowerShell 5.1's ConvertTo-Json explodes this 65 KB HTML into ~45 MB (every escape
+# gets re-escaped), which Cloudflare rejects with 400 or serves with intermittent 500s.
+# A plain JS string literal is exact and stays ~65 KB.
+$jsHtml = $html.Replace('\', '\\').Replace('"', '\"').Replace("`r", '').Replace("`n", '\n').Replace('</script>', '<\/script>')
+$embedded = '"' + $jsHtml + '"'
 
 # Seed the worker's login fallback using the DIRECT origin (fast and reachable from this machine
 # even when Cloudflare -> Funnel is wedged). Only a password hash and the short-lived token are
