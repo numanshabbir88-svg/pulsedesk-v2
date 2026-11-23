@@ -46,6 +46,12 @@ public sealed class Collector : BackgroundService
     // waiting for the next capture tick - that removes the 4-5 s "connect" delay.
     private volatile bool _forceFrame;
 
+    // Optional system-audio sharing. OFF by default: it only starts when the admin presses
+    // the Audio button, and stops on explicit OFF / stream off / socket disconnect. Text
+    // frames are already forwarded by the server, so the live-screen connection is untouched.
+    private AudioCapturer? _audio;
+    private volatile bool _audioWanted;
+
     // Adaptive live rate control. SendAsync blocks when the uplink/tunnel is slow; we watch
     // the real send time every 12 frames and shrink the stream until frames flow again, then
     // slowly grow it back toward the quality the admin selected.
@@ -245,6 +251,31 @@ public sealed class Collector : BackgroundService
             Math.Clamp(quality, 20, 95));
         bmp.Save(ms, JpegCodec, pars);
         return ms.ToArray();
+    }
+
+    /// <summary>Local diagnostic: 3 s of system-audio loopback, written to ProgramData\PulseDesk\audio-test.txt.</summary>
+    public static void AudioTest()
+    {
+        var path = Path.Combine(Settings.Dir, "audio-test.txt");
+        var lines = new List<string>();
+        try
+        {
+            using var cap = new AudioCapturer();
+            int chunks = 0, bytes = 0;
+            var source = cap.Start(pcm => { chunks++; bytes += pcm.Length; });
+            lines.Add("source=" + source);
+            Thread.Sleep(3000);
+            cap.Stop();
+            double secs = 3.0;
+            lines.Add($"chunks={chunks} bytes={bytes} secs={secs:F1} rate={bytes / secs:F0} B/s");
+            lines.Add($"expected={AudioCapturer.TargetRate * 2} B/s (16 kHz mono 16-bit)");
+            lines.Add("RESULT=" + (bytes > 16000 ? "OK - audio loopback works" : "NO DATA - check playback device/volume"));
+        }
+        catch (Exception ex)
+        {
+            lines.Add("FAIL " + ex.GetType().Name + ": " + ex.Message);
+        }
+        File.WriteAllLines(path, lines);
     }
 
     /// <summary>
@@ -658,6 +689,7 @@ public sealed class Collector : BackgroundService
             finally
             {
                 StopControl("remote control auto-released (agent disconnected)");
+                StopAudio();
                 _ws = null; _streamOn = false;
                 try { ws?.Dispose(); } catch { }
             }
@@ -697,6 +729,7 @@ public sealed class Collector : BackgroundService
                 case "stream":
                     _streamOn = j.TryGetProperty("on", out var on) && on.GetBoolean();
                     if (_streamOn) { _hashValid = false; _forceFrame = true; }  // first frame now
+                    else StopAudio();   // no viewers left: never capture audio in the background
                     break;
                 case "pause":
                     _s.Paused = true; _s.Save();
@@ -794,6 +827,14 @@ public sealed class Collector : BackgroundService
                 case "status":
                     _ = SendStatus();
                     break;
+
+                // ---- optional system audio (speakers / Teams / Zoom loopback) ----
+                case "audio-on":
+                    StartAudio();
+                    break;
+                case "audio-off":
+                    StopAudio();
+                    break;
                 case "input":
                     if (_controlOn)
                     {
@@ -824,6 +865,40 @@ public sealed class Collector : BackgroundService
             await SendText(json);
         }
         catch { }
+    }
+
+    /// <summary>Starts optional system-audio loopback. Safe to call repeatedly.</summary>
+    private void StartAudio()
+    {
+        if (_audioWanted && _audio?.IsRunning == true) return;
+        _audioWanted = true;
+        try
+        {
+            _audio ??= new AudioCapturer();
+            var source = _audio.Start(SendAudioChunk);
+            Settings.Log("audio loopback started: " + source);
+            _ = SendText("{\"cmd\":\"audio-state\",\"on\":true,\"rate\":16000}");
+        }
+        catch (Exception ex)
+        {
+            Settings.Log("audio start failed: " + ex.Message);
+            _ = SendText("{\"cmd\":\"audio-state\",\"on\":false,\"error\":\"no audio device\"}");
+        }
+    }
+
+    /// <summary>Stops audio immediately - no background capture after the admin turns it off.</summary>
+    private void StopAudio()
+    {
+        if (!_audioWanted && _audio?.IsRunning != true) return;
+        _audioWanted = false;
+        try { _audio?.Stop(); } catch { }
+        _ = SendText("{\"cmd\":\"audio-state\",\"on\":false}");
+    }
+
+    private void SendAudioChunk(byte[] pcm)
+    {
+        if (pcm.Length == 0) return;
+        _ = SendText("{\"cmd\":\"audio\",\"rate\":16000,\"d\":\"" + Convert.ToBase64String(pcm) + "\"}");
     }
 
     private async Task SendText(string json)

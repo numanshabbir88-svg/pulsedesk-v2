@@ -31,6 +31,9 @@ internal static class Program
         // ---- local diagnostic: capture / hash / JPEG timing (writes a text file, no window)
         if (mode == "--bench") { Collector.Benchmark(args.Length > 1 ? args[1] : null); return 0; }
 
+        // ---- local diagnostic: 3 s system-audio loopback test (writes a text file, no window)
+        if (mode == "--audiotest") { Collector.AudioTest(); return 0; }
+
         // ---- explicit background run (auto-start)
         if (mode == "--run") return RunCollector(args);
 
