@@ -1,8 +1,8 @@
 @echo off
-title PulseDesk - stop monitoring (no admin needed)
+title PulseDesk v.2 - STOP
 color 0F
 echo ============================================================
-echo   PulseDesk v.2 - STOP monitoring on this computer
+echo   PulseDesk v.2 - STOP on this computer
 echo ============================================================
 echo.
 echo Use this when you do NOT have administrator rights.
@@ -30,7 +30,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo Monitoring is now OFF for this Windows account.
+echo PulseDesk v.2 is now OFF for this Windows account.
 echo For a full removal, ask IT/admin to run "Remove-PulseDesk.cmd".
 echo.
 pause

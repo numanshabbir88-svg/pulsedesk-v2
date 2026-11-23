@@ -1,12 +1,12 @@
 @echo off
-title PulseDesk - remove monitoring agent
+title PulseDesk v.2 - remove
 color 0F
 echo ============================================================
-echo   PulseDesk v.2 - remove the monitoring agent
+echo   PulseDesk v.2 - remove
 echo ============================================================
 echo.
 echo This removes the PulseDesk agent from THIS computer:
-echo   - the running agent (monitoring stops immediately)
+echo   - the running agent (stops immediately)
 echo   - the logon auto-start entry
 echo   - the "PulseDesk" entry in Settings / Apps
 echo   - C:\Program Files\PulseDesk  and  C:\ProgramData\PulseDesk

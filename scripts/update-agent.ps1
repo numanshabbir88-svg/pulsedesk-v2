@@ -57,7 +57,7 @@ foreach ($folder in @([Environment]::GetFolderPath('CommonDesktopDirectory'),
         $lnk.Arguments = '--home'
         $lnk.WorkingDirectory = $installDir
         $lnk.IconLocation = "$iconTarget,0"
-        $lnk.Description = 'PulseDesk - monitoring status and privacy'
+        $lnk.Description = 'PulseDesk v.2'
         $lnk.Save()
         Write-Host "icon -> $(Join-Path $folder 'PulseDesk.lnk')"
     } catch { Write-Host "icon failed: $($_.Exception.Message)" }

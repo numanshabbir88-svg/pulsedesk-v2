@@ -240,7 +240,7 @@ Zaroorat: JDK 17 (`%LOCALAPPDATA%\jdk17`) + Android SDK (`%LOCALAPPDATA%\Android
 
 ## Uninstall (employee PC)
 
-- Settings -> Apps -> **PulseDesk Monitoring Agent** -> Uninstall, ya
+- Settings -> Apps -> **PulseDesk v.2** -> Uninstall, ya
 - `"C:\Program Files\PulseDesk\PulseDesk.Agent.exe" --uninstall`
 - Manual cleanup: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` se `PulseDesk` value,
   aur `C:\ProgramData\PulseDesk` folder delete karein.

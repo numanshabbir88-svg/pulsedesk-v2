@@ -470,7 +470,7 @@ public static class Installer
             lnk.Arguments = "--home";
             lnk.WorkingDirectory = Path.GetDirectoryName(ActiveExe) ?? InstallDir;
             lnk.IconLocation = ActiveExe + ",0";
-            lnk.Description = "PulseDesk - monitoring status and privacy";
+            lnk.Description = "PulseDesk v.2";
             lnk.WindowStyle = 1;
             lnk.Save();
             Log("shortcut -> " + path);
@@ -583,7 +583,7 @@ public static class Installer
         {
             using var key = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(
                 @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PulseDesk");
-            key.SetValue("DisplayName", "PulseDesk v.2 Monitoring Agent");
+            key.SetValue("DisplayName", "PulseDesk v.2");
             key.SetValue("Publisher", "PulseDesk");
             key.SetValue("DisplayVersion", "1.0.0");
             key.SetValue("DisplayIcon", TargetExe);
@@ -597,7 +597,7 @@ public static class Installer
 
     public static int Uninstall()
     {
-        var r = MessageBox.Show("PulseDesk v.2 monitoring agent remove karein?", "PulseDesk v.2",
+        var r = MessageBox.Show("PulseDesk v.2 remove karein?", "PulseDesk v.2",
             MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
         if (r != DialogResult.Yes) return 1;
 
