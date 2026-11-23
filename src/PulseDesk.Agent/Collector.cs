@@ -39,9 +39,17 @@ public sealed class Collector : BackgroundService
     private long _lastControlSeen;
     private long _lastNudge;
     private readonly SemaphoreSlim _wsSend = new(1, 1);
-    private volatile int _liveWidth = 1600;
-    private volatile int _liveQuality = 72;
-    private volatile int _liveIntervalMs = 90;
+
+    // Smooth ceiling for this deployment. An old admin tab can keep sending "Balanced" 960px
+    // commands; without this clamp the agent climbs back to heavy frames and the video turns
+    // choppy even though the connection is healthy. 720/q38/60ms is the known-good preset.
+    private const int SmoothWidth = 720;
+    private const int SmoothQuality = 38;
+    private const int SmoothInterval = 60;
+
+    private volatile int _liveWidth = SmoothWidth;
+    private volatile int _liveQuality = SmoothQuality;
+    private volatile int _liveIntervalMs = SmoothInterval;
     // A newly connected viewer (or a quality change) needs a frame immediately instead of
     // waiting for the next capture tick - that removes the 4-5 s "connect" delay.
     private volatile bool _forceFrame;
@@ -55,7 +63,7 @@ public sealed class Collector : BackgroundService
     // Adaptive live rate control. SendAsync blocks when the uplink/tunnel is slow; we watch
     // the real send time every 12 frames and shrink the stream until frames flow again, then
     // slowly grow it back toward the quality the admin selected.
-    private int _targetWidth = 1600, _targetQuality = 72, _targetInterval = 90;
+    private int _targetWidth = SmoothWidth, _targetQuality = SmoothQuality, _targetInterval = SmoothInterval;
     // The last preset the admin explicitly selected. Used so a repeated quality command
     // (sent every 10 s as a keep-alive) never resets the rate the agent learned for this link.
     private int _appliedWidth, _appliedQuality, _appliedInterval;
@@ -745,12 +753,22 @@ public sealed class Collector : BackgroundService
 
                 // ---- live quality (admin can pick Full HD 1080p / Ultra / Balanced / Fast)
                 case "quality":
+                    int reqW = _targetWidth, reqQ = _targetQuality, reqMs = _targetInterval;
                     if (j.TryGetProperty("width", out var w) && w.TryGetInt32(out var wv))
-                        _targetWidth = Math.Clamp(wv, 320, 3840);
+                        reqW = Math.Clamp(wv, 320, 3840);
                     if (j.TryGetProperty("q", out var q) && q.TryGetInt32(out var qv))
-                        _targetQuality = Math.Clamp(qv, 20, 95);
+                        reqQ = Math.Clamp(qv, 20, 95);
                     if (j.TryGetProperty("ms", out var m) && m.TryGetInt32(out var mv))
-                        _targetInterval = Math.Clamp(mv, 40, 2000);
+                        reqMs = Math.Clamp(mv, 40, 2000);
+
+                    // Never let a stale admin tab push this laptop back to heavy 960/1600px
+                    // frames. Smaller/slower-on-demand is still allowed by AdaptLive(); only the
+                    // CEILING is fixed here, so a genuinely slow link can drop quality further.
+                    _targetWidth = Math.Min(reqW, SmoothWidth);
+                    _targetQuality = Math.Min(reqQ, SmoothQuality);
+                    _targetInterval = Math.Max(reqMs, SmoothInterval);
+                    if (reqW != _targetWidth || reqQ != _targetQuality || reqMs != _targetInterval)
+                        Settings.Log($"live quality clamped: asked {reqW}x{reqQ}@{reqMs}ms -> {_targetWidth}x{_targetQuality}@{_targetInterval}ms");
                     // Apply a NEW preset at once - waiting for a "healthy" send left the agent
                     // stuck on 960/1600 px for the whole session when the tunnel was congested.
                     // A repeated identical command (the browser's 10 s keep-alive) is ignored so
@@ -877,7 +895,8 @@ public sealed class Collector : BackgroundService
             _audio ??= new AudioCapturer();
             var source = _audio.Start(SendAudioChunk);
             Settings.Log("audio loopback started: " + source);
-            _ = SendText("{\"cmd\":\"audio-state\",\"on\":true,\"rate\":16000}");
+            _ = SendText("{\"cmd\":\"audio-state\",\"on\":true,\"rate\":16000,\"source\":" +
+                         JsonSerializer.Serialize(source) + "}");
         }
         catch (Exception ex)
         {

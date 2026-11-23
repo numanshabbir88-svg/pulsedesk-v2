@@ -29,23 +29,23 @@ internal sealed class AudioCapturer : IDisposable
     public string Start(Action<byte[]> onChunk)
     {
         Stop();
-        // Pick an ACTIVE render endpoint explicitly. The Windows "default" can point at a
-        // disconnected Bluetooth headset, which produces no loopback samples at all.
-        // If no playback device exists this throws - the caller reports "audio unavailable"
-        // and the live screen keeps working normally.
+        // Capture the endpoint the employee actually HEARS. Windows keeps separate defaults for
+        // Multimedia and Communications; Teams/Zoom often use the communications device (a
+        // Bluetooth headset), so skipping "headset" endpoints captured silence on some laptops.
+        // Prefer the multimedia default, then communications, then any active render device.
         using var enumerator = new MMDeviceEnumerator();
-        var devices = enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active);
-        if (devices.Count == 0) throw new InvalidOperationException("no active playback device");
         MMDevice? chosen = null;
-        foreach (var d in devices)
+        try { chosen = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia); } catch { }
+        if (chosen == null || chosen.State != DeviceState.Active)
         {
-            var name = d.FriendlyName ?? "";
-            // Prefer real speakers over hands-free/communication endpoints.
-            if (name.IndexOf("hands", StringComparison.OrdinalIgnoreCase) < 0 &&
-                name.IndexOf("headset", StringComparison.OrdinalIgnoreCase) < 0)
-            { chosen = d; break; }
+            try { chosen = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Communications); } catch { }
         }
-        chosen ??= devices[0];
+        if (chosen == null || chosen.State != DeviceState.Active)
+        {
+            var devices = enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active);
+            if (devices.Count == 0) throw new InvalidOperationException("no active playback device");
+            chosen = devices[0];
+        }
         _device = chosen;
         var cap = new WasapiLoopbackCapture(chosen);
         var format = cap.WaveFormat;

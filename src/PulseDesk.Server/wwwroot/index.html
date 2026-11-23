@@ -482,7 +482,7 @@ const LADDER = [
 const QUALITY = {
   // Smooth must never climb past 960px: on the employee laptop the bigger presets cost more
   // capture time than the tunnel saves, which appeared as ruk-ruk / jerky video.
-  fast:     { level: 2, cap: 3, label: 'Smooth' },
+  fast:     { level: 2, cap: 2, label: 'Smooth' },
   balanced: { level: 3, cap: 4, label: 'Balanced' },
   hd:       { level: 4, cap: 6, label: 'Full HD' },
   ultra:    { level: 6, cap: 6, label: 'Ultra' }
@@ -617,7 +617,10 @@ function startLive(keepFrame){
     }, 16000);
     $('#liveState').className='pill on'; $('#liveState').textContent='connecting';
     $('#liveMsg').textContent='Pehla frame aa raha hai...';
-    if(!qualitySentOnce){ applyQuality(true); qualitySentOnce = true; }
+    // Force the smooth preset ONCE per tab so a stale "Balanced" tab cannot keep the agent at
+    // 960px. The command is identical across tabs, so the agent's repeat-command guard ignores
+    // the keep-alives and no tab fight occurs.
+    if(!qualitySentOnce){ applyQuality(true, true); qualitySentOnce = true; }
     // A stray "stream off" (a viewer disconnect racing a reconnect) can leave the agent
     // receiving quality commands while sending NO frames - the picture then looks frozen.
     // Re-assert stream-on directly over this socket so the stream self-heals quickly.
@@ -778,11 +781,11 @@ function sendQuality(level, force){
   const pill = $('#liveState');
   if(pill && pill.textContent.indexOf('streaming') >= 0) pill.textContent = 'streaming · ' + l.w + 'p';
 }
-function applyQuality(quiet){
+function applyQuality(quiet, force){
   const p = QUALITY[$('#liveQuality').value] || QUALITY.fast;
   autoCeiling = p.cap; upStreak = 0;
-  // An explicit dropdown change always takes over the lease; automatic sends do not.
-  sendQuality(p.level, quiet !== true);
+  // An explicit dropdown change OR the first connect of a tab takes over the lease.
+  sendQuality(p.level, force === true || quiet !== true);
   if(!quiet) toast('Stream quality: ' + p.label + ' (auto)');
 }
 // Measure frames actually reaching the browser - this includes the tunnel AND the viewer's
@@ -822,6 +825,8 @@ function handleAgentText(raw){
     const m = JSON.parse(raw);
     if(m && m.cmd === 'audio'){ playAudioChunk(m.d || ''); return; }
     if(m && m.cmd === 'audio-state'){
+      const ab = $('#btnAudio');
+      if(ab && m.source) ab.title = 'Audio source: ' + m.source;
       // Safety: agent can only turn audio OFF (no device). NEVER turn it ON by itself.
       if(m.on === false && audioOn){
         audioOn = false;
