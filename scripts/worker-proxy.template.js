@@ -6,10 +6,6 @@ const ORIGIN = "__ORIGIN__";
 // The admin UI is embedded at deploy time so a cold Cloudflare edge never has to fetch it from
 // the hidden tunnel. This removes the 20-30 s first-load delay on a new network/Wi-Fi.
 const EMBEDDED_INDEX = __EMBEDDED_INDEX__;
-// One-click bootstrap: the origin's static-file middleware won't serve .bat/.ps1 (unknown MIME).
-// Embedding them in the Worker avoids restarting the live server and works on both stable URLs.
-const BOOTSTRAP_BAT  = __BOOTSTRAP_BAT__;
-const BOOTSTRAP_PS1  = __BOOTSTRAP_PS1__;
 
 addEventListener('fetch', event => {
   event.respondWith(proxy(event.request, event));
@@ -297,19 +293,6 @@ async function proxy(request, event) {
     return new Response(EMBEDDED_INDEX, {
       status: 200,
       headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=3600' }
-    });
-  }
-  // Tiny one-click updater files, served by the Worker itself (no origin restart needed).
-  if (path === '/downloads/ONE-CLICK-UPDATE.bat') {
-    return new Response(BOOTSTRAP_BAT, {
-      status: 200,
-      headers: { 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="ONE-CLICK-UPDATE.bat"', 'Cache-Control': 'public, max-age=3600' }
-    });
-  }
-  if (path === '/bootstrap-update.ps1') {
-    return new Response(BOOTSTRAP_PS1, {
-      status: 200,
-      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }
     });
   }
 

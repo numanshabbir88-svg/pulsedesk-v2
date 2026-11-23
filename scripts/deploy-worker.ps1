@@ -37,14 +37,6 @@ $inject = "<script>window.PDS_WS_BASE='$wsBase/';(function(){try{var v='$ver';if
 $html = $html.Replace('<head>', "<head>$inject")
 $embedded = $html | ConvertTo-Json -Compress -Depth 5
 
-# One-click bootstrap files. The origin cannot serve .bat/.ps1 (unknown MIME) and restarting the
-# live server to register MIME types would drop active viewers, so both are embedded here.
-$batPath = Join-Path $root 'dist\agent\ONE-CLICK-UPDATE.bat'
-$ps1Path = Join-Path $root 'dist\agent\bootstrap-update.ps1'
-if (-not (Test-Path $batPath) -or -not (Test-Path $ps1Path)) { throw "missing one-click updater files" }
-$batEmbedded = (Get-Content $batPath -Raw) | ConvertTo-Json -Compress -Depth 5
-$ps1Embedded = (Get-Content $ps1Path -Raw) | ConvertTo-Json -Compress -Depth 5
-
 # Seed the worker's login fallback using the DIRECT origin (fast and reachable from this machine
 # even when Cloudflare -> Funnel is wedged). Only a password hash and the short-lived token are
 # injected into the DEPLOYED script; nothing is printed, committed or stored in a file.
@@ -71,8 +63,6 @@ try {
 $js = Get-Content $template -Raw
 $js = $js.Replace('__ORIGIN__', $Origin.TrimEnd('/'))
 $js = $js.Replace('__EMBEDDED_INDEX__', $embedded)
-$js = $js.Replace('__BOOTSTRAP_BAT__', $batEmbedded)
-$js = $js.Replace('__BOOTSTRAP_PS1__', $ps1Embedded)
 $js = $js.Replace('__SEED_HASH__', $seedHash)
 $js = $js.Replace('__SEED_TOKEN__', $seedToken)
 $js = $js.Replace('__SEED_DEVICES__', $seedDevices)
