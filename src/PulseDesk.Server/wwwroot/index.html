@@ -487,7 +487,10 @@ const QUALITY = {
   hd:       { level: 4, cap: 6, label: 'Full HD' },
   ultra:    { level: 6, cap: 6, label: 'Ultra' }
 };
-let autoLevel = 2, autoCeiling = 3, frameTimes = [], autoChecked = 0, upStreak = 0;
+// This deployment is locked to the smooth preset. Even if an old tab has "Balanced / Full HD"
+// selected, no command above 720px is ever sent - the old agent has no clamp of its own yet.
+const SMOOTH_CEILING = 2;
+let autoLevel = 2, autoCeiling = SMOOTH_CEILING, frameTimes = [], autoChecked = 0, upStreak = 0;
 // More than one open admin tab must not fight over the agent's live preset: each tab used to
 // resend its own quality every 10 s, flipping 800px/960px and making the picture stall.
 const TAB_ID = Math.random().toString(36).slice(2);
@@ -775,7 +778,7 @@ function canLeadQuality(){
   return true;
 }
 function sendQuality(level, force){
-  autoLevel = Math.max(0, Math.min(LADDER.length - 1, level));
+  autoLevel = Math.max(0, Math.min(SMOOTH_CEILING, level));
   const l = LADDER[autoLevel];
   if(force || canLeadQuality()) liveSend({ cmd:'quality', width:l.w, q:l.q, ms:l.ms });
   const pill = $('#liveState');
@@ -783,7 +786,7 @@ function sendQuality(level, force){
 }
 function applyQuality(quiet, force){
   const p = QUALITY[$('#liveQuality').value] || QUALITY.fast;
-  autoCeiling = p.cap; upStreak = 0;
+  autoCeiling = Math.min(p.cap, SMOOTH_CEILING); upStreak = 0;
   // An explicit dropdown change OR the first connect of a tab takes over the lease.
   sendQuality(p.level, force === true || quiet !== true);
   if(!quiet) toast('Stream quality: ' + p.label + ' (auto)');
