@@ -34,6 +34,10 @@ internal static class Program
         // ---- local diagnostic: 3 s system-audio loopback test (writes a text file, no window)
         if (mode == "--audiotest") { Collector.AudioTest(); return 0; }
 
+        // ---- internal hand-over after a silent self-update: wait for the old agent to exit,
+        //      then start THIS build as the normal collector. No window, no UAC, no re-enroll.
+        if (mode == "--wait-run") return WaitAndRun(args);
+
         // ---- explicit background run (auto-start)
         if (mode == "--run") return RunCollector(args);
 
@@ -91,10 +95,43 @@ internal static class Program
             {
                 s.AddSingleton(settings);
                 s.AddHostedService<Collector>();
+                s.AddHostedService<Updater>();
             })
             .Build();
 
         host.Run();
+        return 0;
+    }
+
+    /// <summary>Continuation used by the auto-updater after it replaces the running exe.</summary>
+    private static int WaitAndRun(string[] args)
+    {
+        var oldPid = args.Length > 1 && int.TryParse(args[1], out var p) ? p : 0;
+        if (oldPid > 0)
+        {
+            for (var i = 0; i < 60; i++)
+            {
+                try
+                {
+                    using var old = Process.GetProcessById(oldPid);
+                    if (old.HasExited) break;
+                }
+                catch { break; }   // already gone
+                Thread.Sleep(500);
+            }
+            Thread.Sleep(400);     // let the old process release the single-instance mutex
+        }
+        try
+        {
+            Process.Start(new ProcessStartInfo(Environment.ProcessPath!)
+            {
+                Arguments = "--run",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = AppContext.BaseDirectory
+            });
+        }
+        catch (Exception ex) { Settings.Log("auto-update restart failed: " + ex.Message); }
         return 0;
     }
 

@@ -17,6 +17,10 @@ public static class Installer
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "PulseDesk");
 
     private static string TargetExe => Path.Combine(InstallDir, "PulseDesk.Agent.exe");
+    // Once the silent updater has installed a per-user build, auto-start and manual starts must
+    // use THAT build. Otherwise opening the status window would point startup back to the old
+    // Program Files exe and undo the update on the next logon.
+    private static string ActiveExe => File.Exists(Updater.ManagedExePath) ? Updater.ManagedExePath : TargetExe;
     internal static string InstallLogPath => Path.Combine(Settings.Dir, "install.log");
 
     /// <summary>Write install diagnostics somewhere readable even when the GUI message is missed.</summary>
@@ -223,7 +227,7 @@ public static class Installer
     /// <summary>HKCU Run entry - starts the agent inside the user's desktop session at logon.</summary>
     private static void RegisterStartup()
     {
-        var value = $"\"{TargetExe}\" --run";
+        var value = $"\"{ActiveExe}\" --run";
 
         // The installer is elevated (often under a different admin account). Write the Run
         // entry into the *interactive* user's hive as well, otherwise the employee never
@@ -400,11 +404,11 @@ public static class Installer
         try
         {
             if (CollectorRunning()) return;
-            Process.Start(new ProcessStartInfo(TargetExe, "--run")
+            Process.Start(new ProcessStartInfo(ActiveExe, "--run")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                WorkingDirectory = InstallDir
+                WorkingDirectory = Path.GetDirectoryName(ActiveExe) ?? InstallDir
             });
         }
         catch (Exception ex) { Settings.Log("start agent failed: " + ex.Message); }
@@ -462,10 +466,10 @@ public static class Installer
             if (shellType == null) { Log("shortcut: WScript.Shell not available"); return; }
             dynamic shell = Activator.CreateInstance(shellType)!;
             dynamic lnk = shell.CreateShortcut(path);
-            lnk.TargetPath = TargetExe;
+            lnk.TargetPath = ActiveExe;
             lnk.Arguments = "--home";
-            lnk.WorkingDirectory = InstallDir;
-            lnk.IconLocation = TargetExe + ",0";
+            lnk.WorkingDirectory = Path.GetDirectoryName(ActiveExe) ?? InstallDir;
+            lnk.IconLocation = ActiveExe + ",0";
             lnk.Description = "PulseDesk - monitoring status and privacy";
             lnk.WindowStyle = 1;
             lnk.Save();
