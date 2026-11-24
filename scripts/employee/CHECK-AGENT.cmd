@@ -20,6 +20,14 @@ reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v PulseDesk 2>nu
 if errorlevel 1 echo     AUTO-START ENTRY Nahi MILI
 echo.
 
+echo [3b] Enrollment file (andar ka token/device id nahi dikha rahe):
+if exist "%ProgramData%\PulseDesk\agent.json" (
+  echo     ENROLLMENT OK - purana one-click update chalaya ja sakta hai
+) else (
+  echo     ENROLLMENT FILE NAHI MILI - installer se dobara enroll karna padega
+)
+echo.
+
 echo [4] Server se link:
 powershell -NoProfile -Command "try{$r=Invoke-WebRequest -Uri 'https://desktop-l21qf2i.taila5e0e7.ts.net/pulsedesk/agent-update.json' -UseBasicParsing -TimeoutSec 15; '    SERVER OK status='+$r.StatusCode}catch{'    SERVER FAIL: '+$_.Exception.Message}"
 echo.
